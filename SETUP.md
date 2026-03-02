@@ -216,6 +216,12 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+folders:
+  state: rw
+  skills: rw
+  blocks: ro
+  scripts: ro
+  logs: ro
 ```
 
 | Key | Purpose |
@@ -225,6 +231,27 @@ always_respond_bot_ids: []
 | `discord_messages_in_prompt` | Recent Discord messages in each prompt |
 | `discord_token_env` | Env var name for Discord token |
 | `always_respond_bot_ids` | Bot author IDs the agent responds to |
+| `folders` | Map of folder names to access mode (`rw` or `ro`) |
+
+### Folders
+
+The `folders` key controls which directories the agent can see and whether it can write to them. Each entry maps a folder name to an access mode:
+
+- `rw` — read-write (agent can read and modify files)
+- `ro` — read-only (agent can read but not modify files)
+
+Folders are created automatically on startup. Add custom folders to give your agent access to additional directories:
+
+```yaml
+folders:
+  state: rw
+  skills: rw
+  blocks: ro
+  scripts: ro
+  logs: ro
+  research: ro       # custom read-only folder
+  data: rw           # custom read-write folder
+```
 
 Related files:
 - `scheduler.yaml` — cron/time-of-day jobs
