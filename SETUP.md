@@ -232,6 +232,7 @@ folders:
 | `discord_token_env` | Env var name for Discord token |
 | `always_respond_bot_ids` | Bot author IDs the agent responds to |
 | `folders` | Map of folder names to access mode (`rw` or `ro`) |
+| `mcp_servers` | List of MCP server configs (see below) |
 
 ### Folders
 
@@ -252,6 +253,32 @@ folders:
   research: ro       # custom read-only folder
   data: rw           # custom read-write folder
 ```
+
+### MCP Servers
+
+Add [MCP](https://modelcontextprotocol.io/) servers to give your agent access to external tools. Servers run as subprocesses and their tools appear alongside built-in tools.
+
+```yaml
+mcp_servers:
+  - name: brave-search
+    command: npx
+    args: ["-y", "@anthropic/mcp-server-brave-search"]
+    env:
+      BRAVE_API_KEY: "${BRAVE_API_KEY}"
+  - name: github
+    command: npx
+    args: ["-y", "@anthropic/mcp-server-github"]
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
+```
+
+Each server entry requires:
+- `name` — unique identifier (used to namespace tools as `mcp_<name>_<tool>`)
+- `command` — executable to run (e.g., `npx`, `python`, `node`)
+- `args` — command arguments
+- `env` — (optional) environment variables; `${VAR}` references are expanded from the process environment
+
+Servers start on app launch. If a server fails to start, it's skipped — other servers and the rest of the app continue normally. Works with any model (MiniMax, Kimi, Claude, etc.).
 
 Related files:
 - `scheduler.yaml` — cron/time-of-day jobs

@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from .builtin_skills import BUILTIN_HOME_DIRNAME, sync_builtin_skills_home
+from .mcp_client import MCPServerConfig, parse_mcp_server_configs
 
 DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
@@ -171,6 +172,7 @@ class AppConfig:
     session_log_retention_days: int = 30
     api_port: int = 0
     folders: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_FOLDERS))
+    mcp_servers: list[MCPServerConfig] = field(default_factory=list)
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -232,6 +234,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
         api_port=int(loaded.get("api_port", 0)),
         folders=_parse_folders(loaded.get("folders")),
+        mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
     )
 
 

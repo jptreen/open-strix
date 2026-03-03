@@ -36,6 +36,7 @@ from .config import (
     bootstrap_home_repo,
     load_config,
 )
+from .mcp_client import MCPManager
 from .discord import (
     DISCORD_HISTORY_REFRESH_LIMIT,
     DISCORD_MESSAGE_CHAR_LIMIT,
@@ -323,6 +324,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
         self._send_message_circuit_breaker_active = False
         self._send_message_warning_reaction_sent = False
 
+        self.mcp_manager: MCPManager | None = None
+        self.agent = self._create_agent()
+
+    def _create_agent(self, extra_tools: list[Any] | None = None) -> Any:
+        """Build the LangGraph agent with all tools."""
         mutable_backend = WriteGuardBackend(
             root_dir=self.home,
             writable_dirs=self.config.writable_dirs,
@@ -348,9 +354,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
                 "Skills:", f"{folders_text}\n\nSkills:",
             )
 
-        self.agent = create_deep_agent(
+        tools = self._build_tools()
+        if extra_tools:
+            tools.extend(extra_tools)
+
+        return create_deep_agent(
             model=model,
-            tools=self._build_tools(),
+            tools=tools,
             system_prompt=system_prompt,
             backend=backend,
             skills=skills,
@@ -754,6 +764,20 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             )
 
     async def run(self) -> None:
+        # Start MCP servers and recreate agent with MCP tools if configured.
+        if self.config.mcp_servers:
+            self.mcp_manager = MCPManager()
+            mcp_tools = await self.mcp_manager.start_servers(
+                self.config.mcp_servers,
+                log_fn=self.log_event,
+            )
+            if mcp_tools:
+                self.agent = self._create_agent(extra_tools=mcp_tools)
+                print(
+                    f"[open-strix] Agent recreated with {len(mcp_tools)} MCP tool(s)",
+                    flush=True,
+                )
+
         self.worker_task = asyncio.create_task(self._event_worker())
         self.scheduler.start()
         self._reload_scheduler_jobs()
@@ -765,6 +789,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
             "app_started",
             home=str(self.home),
             session_logs_cleaned=removed,
+            mcp_servers=[c.config.name for c in (self.mcp_manager.connections if self.mcp_manager else [])],
         )
 
         if self.config.api_port > 0:
@@ -783,6 +808,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin):
 
     async def shutdown(self) -> None:
         self.log_event("app_shutdown_start")
+        if self.mcp_manager is not None:
+            await self.mcp_manager.shutdown()
         if self.api_runner is not None:
             await self.api_runner.cleanup()
         if self.discord_client is not None and not self.discord_client.is_closed():
