@@ -224,7 +224,8 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       html, body {{
         margin: 0;
-        min-height: 100%;
+        height: 100%;
+        overflow: hidden;
         background:
           radial-gradient(circle at top left, rgba(13, 118, 110, 0.08), transparent 32rem),
           linear-gradient(180deg, #efe4cf 0%, #f7f2e7 36%, #f5efe3 100%);
@@ -238,7 +239,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       .shell {{
         max-width: 880px;
-        min-height: calc(100vh - 2rem);
+        height: calc(100vh - 2rem);
         margin: 0 auto;
         display: grid;
         grid-template-rows: auto 1fr auto;
@@ -253,10 +254,6 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .header {{
         padding: 1rem 1.25rem 0.9rem;
         border-bottom: 1px solid var(--line);
-        display: flex;
-        justify-content: space-between;
-        gap: 1rem;
-        align-items: end;
       }}
 
       .title {{
@@ -265,37 +262,29 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         line-height: 1.1;
       }}
 
-      .subtitle {{
-        margin: 0.35rem 0 0;
+      .typing-indicator {{
+        font-size: 0.75rem;
         color: var(--muted);
-        font-size: 0.95rem;
+        min-height: 1.2em;
+        padding-left: 0.5rem;
+        margin-bottom: 0.15rem;
       }}
 
-      .status {{
-        display: inline-flex;
-        align-items: center;
-        gap: 0.55rem;
-        font-size: 0.92rem;
-        color: var(--muted);
-        white-space: nowrap;
-      }}
-
-      .status-dot {{
-        width: 0.7rem;
-        height: 0.7rem;
-        border-radius: 999px;
+      .typing-dot {{
+        display: inline-block;
+        width: 0.45em;
+        height: 0.45em;
+        border-radius: 50%;
         background: var(--accent);
-        box-shadow: 0 0 0 0 rgba(13, 118, 110, 0.4);
+        margin-right: 0.35em;
+        vertical-align: middle;
+        animation: typingPulse 1.2s infinite;
       }}
 
-      .status-dot.busy {{
-        animation: pulse 1.2s infinite;
-      }}
-
-      @keyframes pulse {{
-        0% {{ box-shadow: 0 0 0 0 rgba(13, 118, 110, 0.35); }}
-        70% {{ box-shadow: 0 0 0 0.65rem rgba(13, 118, 110, 0); }}
-        100% {{ box-shadow: 0 0 0 0 rgba(13, 118, 110, 0); }}
+      @keyframes typingPulse {{
+        0% {{ opacity: 0.3; }}
+        50% {{ opacity: 1; }}
+        100% {{ opacity: 0.3; }}
       }}
 
       .messages {{
@@ -480,7 +469,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }}
 
         .shell {{
-          min-height: 100vh;
+          height: 100vh;
           border-radius: 0;
         }}
 
@@ -502,14 +491,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
   <body>
     <main class="shell">
       <header class="header">
-        <div>
-          <h1 class="title">{agent_name} Local Web Chat</h1>
-          <p class="subtitle">Single-room local chat for channel <code>{channel_id}</code>.</p>
-        </div>
-        <div class="status" id="status">
-          <span class="status-dot" id="status-dot"></span>
-          <span id="status-text">Idle</span>
-        </div>
+        <h1 class="title">{agent_name}</h1>
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
@@ -518,6 +500,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       <section class="composer">
         <form class="composer-form" id="composer">
+          <div class="typing-indicator" id="typing-indicator"></div>
           <textarea id="text" name="text" placeholder="Message open-strix..."></textarea>
           <div class="composer-actions">
             <label class="file-label">
@@ -541,10 +524,10 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       const filesEl = document.getElementById("files");
       const fileListEl = document.getElementById("file-list");
       const sendEl = document.getElementById("send");
-      const statusDotEl = document.getElementById("status-dot");
-      const statusTextEl = document.getElementById("status-text");
+      const typingEl = document.getElementById("typing-indicator");
 
       let lastSignature = "";
+      let pastedFiles = [];
 
       function formatTime(value) {{
         if (!value) return "";
@@ -554,9 +537,11 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       function updateFileList() {{
-        const names = Array.from(filesEl.files || []).map((file) => file.name);
+        const pickedNames = Array.from(filesEl.files || []).map((file) => file.name);
+        const pastedNames = pastedFiles.map((file) => file.name);
+        const allNames = [...pickedNames, ...pastedNames];
         fileListEl.innerHTML = "";
-        names.forEach((name) => {{
+        allNames.forEach((name) => {{
           const chip = document.createElement("span");
           chip.className = "file-chip";
           chip.textContent = name;
@@ -571,13 +556,11 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           message.reactions,
           message.attachments.map((attachment) => attachment.path),
         ]));
-        const nearBottom =
-          messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 48;
-
-        statusDotEl.classList.toggle("busy", Boolean(payload.is_processing));
-        statusTextEl.textContent = payload.is_processing
-          ? `${{AGENT_NAME}} is thinking...`
-          : "Idle";
+        if (payload.is_processing) {{
+          typingEl.innerHTML = '<span class="typing-dot"></span>' + AGENT_NAME + ' is thinking…';
+        }} else {{
+          typingEl.innerHTML = '';
+        }}
 
         if (signature === lastSignature) {{
           return;
@@ -658,9 +641,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           messagesEl.appendChild(article);
         }});
 
-        if (nearBottom) {{
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }}
+        messagesEl.scrollTop = messagesEl.scrollHeight;
       }}
 
       async function refresh() {{
@@ -675,7 +656,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       async function sendMessage(event) {{
         event.preventDefault();
         const text = textEl.value.trim();
-        const files = Array.from(filesEl.files || []);
+        const files = [...Array.from(filesEl.files || []), ...pastedFiles];
         if (!text && files.length === 0) {{
           return;
         }}
@@ -695,6 +676,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
           }}
           textEl.value = "";
           filesEl.value = "";
+          pastedFiles = [];
           updateFileList();
           await refresh();
         }} catch (error) {{
@@ -706,10 +688,35 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         }}
       }}
 
+      textEl.addEventListener("keydown", (event) => {{
+        const isEnter = event.key === "Enter" || event.code === "Enter";
+        const hasMod = event.metaKey || event.ctrlKey;
+        if (!isEnter || !hasMod) return;
+        event.preventDefault();
+        event.stopPropagation();
+        composerEl.requestSubmit();
+      }});
+      textEl.addEventListener("paste", (event) => {{
+        const items = event.clipboardData && event.clipboardData.items;
+        if (!items) return;
+        let hasFiles = false;
+        for (const item of items) {{
+          if (item.kind === "file") {{
+            const file = item.getAsFile();
+            if (file) {{
+              pastedFiles.push(file);
+              hasFiles = true;
+            }}
+          }}
+        }}
+        if (hasFiles) {{
+          updateFileList();
+        }}
+      }});
       filesEl.addEventListener("change", updateFileList);
       composerEl.addEventListener("submit", sendMessage);
 
-      refresh().catch((error) => console.error(error));
+      refresh().then(() => {{ messagesEl.scrollTop = messagesEl.scrollHeight; }}).catch((error) => console.error(error));
       window.setInterval(() => {{
         refresh().catch((error) => console.error(error));
       }}, 1500);
