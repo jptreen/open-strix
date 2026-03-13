@@ -1542,9 +1542,10 @@ wheels = [
 
 [[package]]
 name = "open-strix"
-version = "0.1.29"
+version = "0.1.32"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "apscheduler" },
     { name = "deepagents" },
     { name = "discord-py" },
@@ -1563,6 +1564,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.12.15" },
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "deepagents", specifier = ">=0.4.1" },
     { name = "discord-py", specifier = ">=2.6.4" },

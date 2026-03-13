@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from open_strix.builtin_skills import materialize_builtin_skills
+from open_strix.builtin_skills import materialize_builtin_skills, sync_builtin_skills_home
 from open_strix.config import RepoLayout, STATE_DIR_NAME, bootstrap_home_repo
 
 
@@ -227,6 +227,70 @@ def test_file_frequency_report_groups_file_access_by_session(tmp_path: Path) -> 
     assert top_a["blocks/persona.yaml"] == 1
     assert top_b["logs/fetch-cache/a.txt"] == 1
     assert top_b["blocks/goals.yaml"] == 1
+
+
+def test_materialized_builtin_skills_include_skill_acquisition() -> None:
+    root = materialize_builtin_skills()
+
+    skill_path = root / "skill-acquisition" / "SKILL.md"
+    clawhub_ref = root / "skill-acquisition" / "clawhub-reference.md"
+    skillflag_ref = root / "skill-acquisition" / "skillflag-reference.md"
+
+    assert skill_path.exists()
+    assert clawhub_ref.exists()
+    assert skillflag_ref.exists()
+
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "name: skill-acquisition" in skill_text
+    assert "clawhub" in skill_text.lower()
+    assert "skillflag" in skill_text.lower()
+
+    clawhub_text = clawhub_ref.read_text(encoding="utf-8")
+    assert "clawhub search" in clawhub_text
+    assert "clawhub install" in clawhub_text
+
+    skillflag_text = skillflag_ref.read_text(encoding="utf-8")
+    assert "--skill list" in skillflag_text
+    assert "--skill export" in skillflag_text
+
+
+def test_disable_builtin_skills_excludes_skill_from_sync(tmp_path: Path) -> None:
+    root = tmp_path / "builtin-out"
+    root.mkdir()
+
+    # Sync all skills first.
+    sync_builtin_skills_home(root.parent, disabled_skills=None)
+    builtin_dir = root.parent / ".open_strix_builtin_skills"
+    assert (builtin_dir / "skill-acquisition" / "SKILL.md").exists()
+    assert (builtin_dir / "memory" / "SKILL.md").exists()
+    assert (builtin_dir / "scripts" / "prediction_review_log.py").exists()
+
+    # Sync again with skill-acquisition disabled.
+    sync_builtin_skills_home(root.parent, disabled_skills={"skill-acquisition"})
+    assert not (builtin_dir / "skill-acquisition").exists()
+    # Other skills still present.
+    assert (builtin_dir / "memory" / "SKILL.md").exists()
+    assert (builtin_dir / "prediction-review" / "SKILL.md").exists()
+    # Scripts are never disabled.
+    assert (builtin_dir / "scripts" / "prediction_review_log.py").exists()
+
+
+def test_disable_builtin_skills_via_bootstrap(tmp_path: Path) -> None:
+    home = tmp_path / "agent-home"
+    home.mkdir(parents=True, exist_ok=True)
+    layout = RepoLayout(home=home, state_dir_name=STATE_DIR_NAME)
+
+    # Bootstrap with skill-acquisition disabled.
+    bootstrap_home_repo(
+        layout,
+        checkpoint_text="checkpoint",
+        disabled_builtin_skills={"skill-acquisition"},
+    )
+
+    builtin_dir = home / ".open_strix_builtin_skills"
+    assert not (builtin_dir / "skill-acquisition").exists()
+    assert (builtin_dir / "memory" / "SKILL.md").exists()
+    assert (builtin_dir / "scripts" / "prediction_review_log.py").exists()
 
 
 def test_bootstrap_cleans_legacy_builtin_script_copies(tmp_path: Path) -> None:

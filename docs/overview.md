@@ -95,8 +95,17 @@ not under Git, but everything else is. The Git history provides a way for both u
 what's going on.
 
 # Skills
-Some skills are packaged with open-strix. These show the agent how to use the harness properly, and also encode
-some cybernetics-rooted processes.
+Skills are markdown files with YAML frontmatter. User skills live in `skills/`, built-in skills are synced from
+the package to `.open_strix_builtin_skills/` (gitignored, refreshed on startup).
+
+Built-in skills: onboarding, memory, skill-creator, skill-acquisition, prediction-review, introspection.
+
+The **skill-acquisition** builtin teaches the agent to discover and install skills from [ClawHub](https://clawhub.ai),
+skillflag-compliant CLI tools, and GitHub. Agents can extend themselves at runtime without code changes.
+
+Individual builtins can be disabled via `disable_builtin_skills` in config.yaml.
+
+See [docs/skills.md](skills.md) for the full extensibility model.
 
 # config.yaml
 Where most harness config goes. There's also a `.env` for secrets, please load that as environment variables.

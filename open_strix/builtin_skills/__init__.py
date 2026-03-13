@@ -14,7 +14,7 @@ BUILTIN_HOME_DIRNAME = ".open_strix_builtin_skills"
 def _iter_files(root: Traversable, *, prefix: str) -> list[str]:
     files: list[str] = []
     for entry in root.iterdir():
-        if entry.name == "__pycache__":
+        if entry.name.startswith(".") or entry.name == "__pycache__":
             continue
         rel_path = f"{prefix}/{entry.name}"
         if entry.is_dir():
@@ -62,8 +62,17 @@ def _load_builtin_skills() -> dict[str, str]:
 
 BUILTIN_SKILLS: dict[str, str] = _load_builtin_skills()
 
-def _write_builtin_tree(root: Path, *, overwrite: bool) -> None:
+def _write_builtin_tree(
+    root: Path,
+    *,
+    overwrite: bool,
+    disabled_skills: set[str] | None = None,
+) -> None:
     for rel_path, content in BUILTIN_SKILLS.items():
+        if disabled_skills:
+            top_dir = rel_path.split("/", 1)[0]
+            if top_dir != "scripts" and top_dir in disabled_skills:
+                continue
         target = root / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         if not overwrite and target.exists() and target.read_text(encoding="utf-8") == content:
@@ -81,12 +90,16 @@ def materialize_builtin_skills() -> Path:
     return root
 
 
-def sync_builtin_skills_home(home: Path) -> Path:
+def sync_builtin_skills_home(
+    home: Path,
+    *,
+    disabled_skills: set[str] | None = None,
+) -> Path:
     root = home / BUILTIN_HOME_DIRNAME
     if root.is_file() or root.is_symlink():
         root.unlink()
     elif root.exists():
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
-    _write_builtin_tree(root, overwrite=True)
+    _write_builtin_tree(root, overwrite=True, disabled_skills=disabled_skills)
     return root
