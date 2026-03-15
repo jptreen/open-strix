@@ -181,9 +181,51 @@ Moonshot docs:
 
 Any model with an Anthropic-compatible API works. Just set `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`.
 
+## Choosing an interface
+
+open-strix supports two interfaces. You can use either or both.
+
+| | Web UI | Discord |
+|---|---|---|
+| **Setup time** | ~30 seconds | ~15 minutes |
+| **Requires** | Just `config.yaml` | Bot token + server + permissions |
+| **Best for** | Getting started, local dev, 1:1 chat | Notifications, mobile access, multi-channel, scheduled job alerts |
+| **Limitations** | Browser only, no push notifications | Requires Discord account and server setup |
+
+**Recommendation:** Start with the web UI. It's the fastest way to begin growing your agent. Add Discord later when you want the agent to reach you proactively (scheduled jobs, reminders, etc.).
+
+## Web UI setup
+
+Add to `config.yaml`:
+
+```yaml
+web_ui_port: 8084
+```
+
+Run `uv run open-strix` and open `http://127.0.0.1:8084/`. Done.
+
+The web UI supports text messages, image display, file attachments (drag, paste, or pick), and emoji reactions. It uses the same tools and memory as Discord — switching between them later doesn't lose anything.
+
+**Access from other devices** (phone, tablet, another machine on your network):
+
+```yaml
+web_ui_port: 8084
+web_ui_host: 0.0.0.0
+```
+
+Then open `http://<your-machine-ip>:8084/` from the other device.
+
+**Full config options:**
+
+| Key | Default | Purpose |
+|---|---|---|
+| `web_ui_port` | `0` (disabled) | Port number. Set to any open port to enable. |
+| `web_ui_host` | `127.0.0.1` | Bind address. `0.0.0.0` for network access. |
+| `web_ui_channel_id` | `local-web` | Synthetic channel ID for web messages. |
+
 ## Discord setup
 
-Optional if you only want to use the built-in local web UI.
+Optional. Skip this entirely if you're using the web UI.
 
 Use Discord's [Developer Portal](https://discord.com/developers/applications):
 
@@ -243,22 +285,6 @@ folders:
 | `web_ui_channel_id` | Synthetic channel ID used by the built-in web chat |
 | `folders` | Map of folder names to access mode (`rw` or `ro`) |
 | `mcp_servers` | List of MCP server configs (see below) |
-
-### Local web chat
-
-To enable the built-in 1:1 web UI:
-
-```yaml
-web_ui_port: 8084
-web_ui_host: 127.0.0.1
-web_ui_channel_id: local-web
-```
-
-Then open `http://127.0.0.1:8084/`.
-
-- The UI supports text, pictures, and file attachments.
-- `send_message` replies land in the reserved `web_ui_channel_id`.
-- If you want to reach it from another device on your network, set `web_ui_host: 0.0.0.0`.
 
 ### Folders
 

@@ -54,6 +54,8 @@ Skills:
 - **Before writing to memory or files**, read the memory skill for guidance on what goes where.
 - **Periodically** (e.g., during scheduled ticks or quiet moments), review your journal predictions using the prediction-review skill.
 - **When creating new reusable workflows**, use the skill-creator skill.
+- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes.
+- **When your human asks what you did** (or why), use the introspection skill to answer from your actual logs — not from memory, which may be incomplete or wrong.
 - Don't wait for your human to say "use the memory skill." If the moment calls for it, reach for it yourself.
 
 Python:
@@ -198,6 +200,7 @@ def render_chat_messages(messages: list[dict[str, Any]]) -> str:
         content = str(message.get("content", "")).strip() or "(no text)"
 
         lines = [f"{timestamp} | {author} | message_id={message_id}", content]
+        # Attachments as file paths only — see _save_attachments() for design rationale.
         attachments = message.get("attachments")
         if isinstance(attachments, list) and attachments:
             lines.append("attachments:")
@@ -221,6 +224,8 @@ def render_current_event(event: Mapping[str, Any]) -> str:
         f"{timestamp} | {author} | message_id={message_id}",
         content,
     ]
+    # Attachments are listed as file paths, not inline content. The agent can
+    # use skills/tools to inspect them. See _save_attachments() for rationale.
     attachment_names = event.get("attachment_names")
     if isinstance(attachment_names, list) and attachment_names:
         lines.append("attachments:")

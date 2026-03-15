@@ -9,7 +9,9 @@ cd my-agent
 uv run open-strix
 ```
 
-Three commands. You have an agent.
+Three commands. You have an agent. Open `http://localhost:8084` and start talking.
+
+> **No Discord?** No problem. The built-in web UI works out of the box — just set `web_ui_port: 8084` in `config.yaml`. Discord is optional. See [Local Web UI](#local-web-ui-no-discord-required).
 
 ## What is this?
 
@@ -106,11 +108,22 @@ Every tool call, incoming message, error, and scheduler trigger is logged to `lo
 
 When `api_port` is set in `config.yaml`, a loopback REST API accepts events from external scripts — Bluesky pollers, CI hooks, cross-agent communication. See [docs/events.md](docs/events.md) for the full event schema, query cookbook, and REST API reference.
 
-### Local Web UI
+### Local Web UI (no Discord required)
 
-If you want a simple 1:1 chat without Discord, set `web_ui_port` in `config.yaml` and open the browser UI. It supports text, pictures, and file attachments, and routes through a reserved channel ID (`local-web` by default) so the normal `send_message` tool works without special prompting.
+**Don't want to set up Discord? You don't have to.** The built-in web UI is the fastest way to start talking to your agent — no bot token, no server, no permissions fiddling. Just add two lines to `config.yaml`:
 
-By default it binds to `127.0.0.1`. If you want to reach it from another device on your network, set `web_ui_host: 0.0.0.0`.
+```yaml
+web_ui_port: 8084
+web_ui_host: 127.0.0.1
+```
+
+Start the agent and open `http://127.0.0.1:8084/` in your browser. That's it. You're chatting.
+
+The web UI supports text, images, and file attachments. It uses the same `send_message` tool as Discord, so the agent doesn't need any special configuration — everything works the same way. Scheduled jobs, memory, skills, journal entries — all of it runs identically whether you're on Discord or the web UI.
+
+If you want to reach the UI from your phone or another device on your network, set `web_ui_host: 0.0.0.0`.
+
+See [SETUP.md](SETUP.md) for the full config reference.
 
 ## Growing an agent
 
@@ -124,16 +137,18 @@ See [GROWING.md](GROWING.md) for the full guide on what this process looks like 
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). A Discord bot token is optional if you use only the built-in web UI.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
 uvx open-strix setup --home my-agent --github
 cd my-agent
-# Edit .env with your API key and Discord token
+# Edit .env with your API key (ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL)
 uv run open-strix
 ```
 
 The setup command handles everything: directory structure, git init, GitHub repo creation (with `--github`), service files for your OS, and a walkthrough for model/Discord configuration.
+
+**Quickest path to a working agent:** Set your model API key in `.env`, set `web_ui_port: 8084` in `config.yaml`, run it, and open the browser. No Discord setup needed. Add Discord later if you want scheduled jobs to reach you when you're not at the keyboard.
 
 See [SETUP.md](SETUP.md) for detailed instructions on environment variables, model configuration, Discord setup, and deployment options.
 
