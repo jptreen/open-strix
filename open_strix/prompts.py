@@ -54,6 +54,8 @@ Skills:
 - **Before writing to memory or files**, read the memory skill for guidance on what goes where.
 - **Periodically** (e.g., during scheduled ticks or quiet moments), review your journal predictions using the prediction-review skill.
 - **When creating new reusable workflows**, use the skill-creator skill.
+- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes.
+- **When your human asks what you did** (or why), use the introspection skill to answer from your actual logs — not from memory, which may be incomplete or wrong.
 - Don't wait for your human to say "use the memory skill." If the moment calls for it, reach for it yourself.
 
 Python:
