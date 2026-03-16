@@ -9,6 +9,7 @@ import yaml
 
 from open_strix.config import (
     DEFAULT_FOLDERS,
+    DEFAULT_MODEL_MAX_RETRIES,
     AppConfig,
     RepoLayout,
     _parse_folders,
@@ -59,6 +60,7 @@ class TestAppConfigFolders:
     def test_default_folders(self) -> None:
         config = AppConfig()
         assert config.folders == DEFAULT_FOLDERS
+        assert config.model_max_retries == DEFAULT_MODEL_MAX_RETRIES
         assert config.name == ""
         assert config.web_ui_host == "127.0.0.1"
         assert config.web_ui_channel_id == "local-web"
@@ -80,6 +82,7 @@ class TestLoadConfigFolders:
     def test_loads_folders_from_config(self, tmp_path: Path) -> None:
         config_data = {
             "model": "test-model",
+            "model_max_retries": 9,
             "folders": {"state": "rw", "data": "ro"},
             "web_ui_port": 8081,
             "web_ui_host": "0.0.0.0",
@@ -91,6 +94,7 @@ class TestLoadConfigFolders:
         layout = RepoLayout(home=tmp_path, state_dir_name="state")
         config = load_config(layout)
         assert config.folders == {"state": "rw", "data": "ro"}
+        assert config.model_max_retries == 9
         assert config.web_ui_port == 8081
         assert config.web_ui_host == "0.0.0.0"
         assert config.web_ui_channel_id == "local-web"
@@ -115,6 +119,7 @@ class TestLoadConfigFolders:
         layout = RepoLayout(home=tmp_path, state_dir_name="state")
         config = load_config(layout)
         assert config.folders == DEFAULT_FOLDERS
+        assert config.model_max_retries == DEFAULT_MODEL_MAX_RETRIES
         assert config.name == ""
 
 
@@ -168,6 +173,7 @@ class TestBootstrapCreatesFolders:
         layout = RepoLayout(home=tmp_path, state_dir_name="state")
         bootstrap_home_repo(layout, checkpoint_text="test")
         loaded = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+        assert loaded["model_max_retries"] == DEFAULT_MODEL_MAX_RETRIES
         assert "folders" in loaded
         assert loaded["folders"] == DEFAULT_FOLDERS
         assert loaded["web_ui_host"] == "127.0.0.1"

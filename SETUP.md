@@ -149,6 +149,7 @@ cp .env.example .env
 ```yaml
 # config.yaml
 model: MiniMax-M2.5
+model_max_retries: 6
 ```
 
 ```bash
@@ -256,6 +257,7 @@ Where this is configured in open-strix:
 
 ```yaml
 model: MiniMax-M2.5
+model_max_retries: 6
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
@@ -275,6 +277,7 @@ folders:
 | Key | Purpose |
 |---|---|
 | `model` | Model name or `provider:model` |
+| `model_max_retries` | Provider retry attempts for transient model/API failures |
 | `journal_entries_in_prompt` | Journal entries included in each prompt |
 | `discord_messages_in_prompt` | Recent Discord messages in each prompt |
 | `discord_token_env` | Env var name for Discord token |

@@ -21,6 +21,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
 from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from .builtin_skills import BUILTIN_HOME_DIRNAME, sync_builtin_skills_home
@@ -32,6 +33,7 @@ from .config import (
     DEFAULT_SCHEDULER,
     STATE_DIR_NAME,
     AppConfig,
+    DEFAULT_MODEL_MAX_RETRIES,
     RepoLayout,
     bootstrap_home_repo,
     load_config,
@@ -110,6 +112,17 @@ def _model_for_deep_agents(model_name: str) -> str:
     if ":" in cleaned:
         return cleaned
     return f"{DEFAULT_MODEL_PROVIDER}:{cleaned}"
+
+
+def _build_chat_model(model_name: str, *, max_retries: int = DEFAULT_MODEL_MAX_RETRIES) -> Any:
+    # Keep the same OpenAI initialization behavior as deepagents while making
+    # provider retries explicit in open-strix config.
+    model_init_params: dict[str, Any] = {
+        "max_retries": max(0, int(max_retries)),
+    }
+    if model_name.startswith("openai:"):
+        model_init_params["use_responses_api"] = True
+    return init_chat_model(model_name, **model_init_params)
 
 
 def _web_ui_url(host: str, port: int) -> str:
@@ -499,7 +512,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             default=mutable_backend,
             routes={BUILTIN_SKILLS_ROUTE: builtin_backend},
         )
-        model = _model_for_deep_agents(self.config.model)
+        model_name = _model_for_deep_agents(self.config.model)
+        model = _build_chat_model(
+            model_name,
+            max_retries=self.config.model_max_retries,
+        )
         skills_sources: list[str] = []
         if self.layout.skills_dir.exists():
             skills_sources.append("/skills")

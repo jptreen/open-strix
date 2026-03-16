@@ -11,6 +11,7 @@ from .mcp_client import MCPServerConfig, parse_mcp_server_configs
 
 DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
+DEFAULT_MODEL_MAX_RETRIES = 6
 STATE_DIR_NAME = "state"
 DEFAULT_WEB_UI_HOST = "127.0.0.1"
 DEFAULT_WEB_UI_CHANNEL_ID = "local-web"
@@ -25,6 +26,7 @@ DEFAULT_FOLDERS: dict[str, str] = {
 
 DEFAULT_CONFIG = """\
 model: MiniMax-M2.5
+model_max_retries: 6
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
@@ -177,6 +179,7 @@ class RepoLayout:
 @dataclass
 class AppConfig:
     model: str = DEFAULT_MODEL
+    model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
     name: str = ""
     journal_entries_in_prompt: int = 90
     discord_messages_in_prompt: int = 10
@@ -244,6 +247,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         model = DEFAULT_MODEL
     return AppConfig(
         model=model,
+        model_max_retries=max(0, int(loaded.get("model_max_retries", DEFAULT_MODEL_MAX_RETRIES))),
         name=str(loaded.get("name", "")).strip(),
         journal_entries_in_prompt=int(loaded.get("journal_entries_in_prompt", 90)),
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
@@ -271,6 +275,10 @@ def _ensure_config_defaults(config_file: Path) -> None:
     model = str(model_raw).strip() if model_raw is not None else ""
     if not model:
         loaded["model"] = DEFAULT_MODEL
+        changed = True
+
+    if "model_max_retries" not in loaded:
+        loaded["model_max_retries"] = DEFAULT_MODEL_MAX_RETRIES
         changed = True
 
     if "always_respond_bot_ids" not in loaded:
