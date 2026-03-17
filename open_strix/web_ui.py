@@ -140,10 +140,11 @@ class WebChatMixin:
         )
 
     def _web_attachment_payload(self, virtual_path: str) -> dict[str, Any]:
+        normalized_path = virtual_path.lstrip("/")
         return {
             "path": virtual_path,
             "name": Path(virtual_path).name,
-            "url": f"/files/{quote(virtual_path, safe='/')}",
+            "url": f"/files/{quote(normalized_path, safe='/')}",
             "is_image": _is_inline_image(virtual_path),
         }
 
@@ -196,7 +197,7 @@ class WebChatMixin:
             return None
 
         allowed_paths = {
-            str(path)
+            str(path).lstrip("/").strip()
             for item in self.message_history_by_channel.get(self.config.web_ui_channel_id, [])
             for path in item.get("attachments", [])
             if str(path).strip()

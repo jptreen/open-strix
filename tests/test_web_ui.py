@@ -83,6 +83,15 @@ def test_web_ui_page_refresh_replaces_existing_messages_to_show_new_reactions(tm
     assert "existing.replaceWith(el);" in page
 
 
+def test_web_attachment_payload_strips_leading_slashes_from_urls(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    payload = strix._web_attachment_payload("/state/research-findings/report.md")
+
+    assert payload["path"] == "/state/research-findings/report.md"
+    assert payload["url"] == "/files/state/research-findings/report.md"
+
+
 @pytest.mark.asyncio
 async def test_web_ui_message_flow_and_attachment_serving(tmp_path: Path) -> None:
     strix = DummyStrix(tmp_path)
@@ -156,7 +165,7 @@ async def test_local_web_send_and_react_round_trip(tmp_path: Path) -> None:
         channel_id="local-web",
         text="agent reply",
         attachment_paths=[shared_file],
-        attachment_names=["state/summary.txt"],
+        attachment_names=["/state/summary.txt"],
     )
 
     assert sent is True
@@ -174,11 +183,14 @@ async def test_local_web_send_and_react_round_trip(tmp_path: Path) -> None:
     messages, _has_more = strix.serialize_web_messages()
     assert len(messages) == 1
     assert messages[0]["content"] == "agent reply"
-    assert messages[0]["attachments"][0]["path"] == "state/summary.txt"
+    assert messages[0]["attachments"][0]["path"] == "/state/summary.txt"
+    assert messages[0]["attachments"][0]["url"] == "/files/state/summary.txt"
     assert messages[0]["reactions"] == ["👍"]
 
     resolved = strix.resolve_web_shared_file("state/summary.txt")
     assert resolved == shared_file.resolve()
+    resolved_with_leading_slash = strix.resolve_web_shared_file("/state/summary.txt")
+    assert resolved_with_leading_slash == shared_file.resolve()
 
 
 @pytest.mark.asyncio
