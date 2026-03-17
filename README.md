@@ -85,6 +85,9 @@ open-strix ships with built-in skills that teach the agent how to operate:
 | **skill-acquisition** | Discover and install skills from [ClawHub](https://clawhub.ai), [skillflag](https://agentskills.io)-compliant CLIs, and GitHub |
 | **prediction-review** | Calibration loops — revisit past predictions against ground truth |
 | **introspection** | Self-diagnosis from event logs and behavioral patterns |
+| **pollers** | Create and manage pollers — lightweight monitoring scripts for external services |
+| **bluesky-poller** | Ready-to-use Bluesky notification monitor with follow-gate trust tiers |
+| **github-poller** | Ready-to-use GitHub repo monitor for issues, PRs, comments, and reviews |
 
 The agent can also discover and install skills from the ecosystem at runtime. The built-in **skill-acquisition** skill teaches it how to search [ClawHub](https://clawhub.ai) (a public registry with 64K+ archived skills), install from skillflag-compliant CLI tools, and wrap external skills for its own use. See [docs/skills.md](docs/skills.md) for the full extensibility model.
 
@@ -101,6 +104,19 @@ disable_builtin_skills:
 The agent has tools to create, modify, and remove its own scheduled jobs. Jobs are cron expressions stored in `scheduler.yaml`. When a job fires, it sends a prompt to the agent — even if no human is around.
 
 This is how agents develop autonomy: scheduled check-ins, maintenance routines, periodic scanning. The agent decides what to schedule based on what it learns about you.
+
+### Monitoring (Pollers)
+
+Pollers are lightweight scripts that check external services on a schedule and report back when something needs attention. They live inside skills as `pollers.json` files and are discovered automatically by the scheduler.
+
+open-strix ships with two ready-to-use pollers:
+
+- **bluesky-poller** — monitors Bluesky for replies, mentions, and quotes. Includes a follow-gate that distinguishes trusted accounts from unknown ones.
+- **github-poller** — monitors GitHub repos for new issues, PRs, comments, and reviews. Filters out the agent's own activity.
+
+Both follow the same contract: run on a cron schedule, output JSONL to stdout when there's something actionable, stay silent when there isn't. The scheduler picks up the output and delivers it to the agent as events.
+
+Writing your own poller is straightforward — see the built-in **pollers** skill for the full contract and design patterns.
 
 ### Events API
 
