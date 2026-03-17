@@ -355,6 +355,52 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         font-size: 0.82rem;
       }}
 
+      .meta-actions {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin-left: auto;
+      }}
+
+      .copy-raw {{
+        max-width: 0;
+        padding: 0;
+        border: 0 solid transparent;
+        background: transparent;
+        color: var(--muted);
+        font-size: 0.76rem;
+        white-space: nowrap;
+        opacity: 0;
+        overflow: hidden;
+        pointer-events: none;
+        transition:
+          max-width 140ms ease,
+          opacity 140ms ease,
+          color 140ms ease,
+          padding 140ms ease,
+          background-color 140ms ease,
+          border-color 140ms ease;
+      }}
+
+      .message:hover .copy-raw,
+      .message:focus-within .copy-raw,
+      .copy-raw.copied {{
+        max-width: 5.5rem;
+        padding: 0.18rem 0.55rem;
+        border-width: 1px;
+        opacity: 1;
+        pointer-events: auto;
+      }}
+
+      .copy-raw:hover,
+      .copy-raw:focus-visible,
+      .copy-raw.copied {{
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-color: rgba(13, 118, 110, 0.22);
+        outline: none;
+      }}
+
       .body {{
         line-height: 1.45;
         overflow-wrap: anywhere;
@@ -663,14 +709,40 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         const article = document.createElement("article");
         article.className = `message ${{message.is_bot ? "agent" : "user"}}`;
         article.dataset.messageId = message.message_id;
+        article.dataset.rawContent = message.content || "";
 
         const meta = document.createElement("div");
         meta.className = "meta";
         const author = document.createElement("strong");
         author.textContent = message.is_bot ? AGENT_NAME : "You";
+        const metaActions = document.createElement("div");
+        metaActions.className = "meta-actions";
         const time = document.createElement("span");
         time.textContent = formatTime(message.timestamp);
-        meta.append(author, time);
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.className = "copy-raw";
+        copyButton.textContent = "Copy raw";
+        copyButton.setAttribute("aria-label", "Copy raw markdown");
+        let copyResetTimer = 0;
+        copyButton.addEventListener("click", async () => {{
+          try {{
+            await navigator.clipboard.writeText(article.dataset.rawContent || "");
+            copyButton.textContent = "Copied!";
+            copyButton.classList.add("copied");
+          }} catch (error) {{
+            console.error("copy raw failed:", error);
+            copyButton.textContent = "Copy failed";
+            copyButton.classList.add("copied");
+          }}
+          window.clearTimeout(copyResetTimer);
+          copyResetTimer = window.setTimeout(() => {{
+            copyButton.textContent = "Copy raw";
+            copyButton.classList.remove("copied");
+          }}, 1500);
+        }});
+        metaActions.append(time, copyButton);
+        meta.append(author, metaActions);
         article.appendChild(meta);
 
         if (message.content) {{
@@ -725,6 +797,17 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         return article;
       }}
 
+      function upsertMessageElement(message, append = true) {{
+        const el = createMessageElement(message);
+        const existing = knownIds.get(message.message_id);
+        if (existing) {{
+          existing.replaceWith(el);
+        }} else if (append) {{
+          messagesEl.appendChild(el);
+        }}
+        knownIds.set(message.message_id, el);
+      }}
+
       function renderMessages(payload) {{
         if (payload.is_processing) {{
           typingEl.innerHTML = '<span class="typing-dot"></span>' + AGENT_NAME + ' is thinking…';
@@ -749,11 +832,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         if (emptyEl) emptyEl.remove();
 
         payload.messages.forEach((message) => {{
-          if (!knownIds.has(message.message_id)) {{
-            const el = createMessageElement(message);
-            knownIds.set(message.message_id, el);
-            messagesEl.appendChild(el);
-          }}
+          upsertMessageElement(message);
         }});
 
         if (payload.messages.length && !oldestLoadedId) {{
