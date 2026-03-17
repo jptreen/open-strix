@@ -368,7 +368,7 @@ web_ui_channel_id: local-web
 
 ### Use Cases
 
-- **Pollers** — built-in Bluesky and GitHub pollers monitor external services on a schedule and deliver events when something needs attention. See the pollers, bluesky-poller, and github-poller builtin skills.
+- **Pollers** — the built-in pollers skill defines the contract for monitoring external services. Install service-specific pollers from [ClawHub](https://clawhub.ai) (e.g., `bluesky-poller`, `github-poller`) or write your own.
 - **CI/CD hooks** — trigger agent review on pull requests
 - **Cross-agent communication** — one agent sends events to another
 - **Monitoring alerts** — external systems notify the agent of issues

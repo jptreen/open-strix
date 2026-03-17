@@ -77,10 +77,15 @@ open-strix ships with skills that teach the agent how to operate:
 | **prediction-review** | Calibration loops — revisit predictions against ground truth, track accuracy |
 | **introspection** | Self-diagnosis from event logs — debugging, communication analysis, pattern detection |
 | **pollers** | Create and manage pollers — lightweight monitoring scripts that check external services on a schedule |
-| **bluesky-poller** | Ready-to-use Bluesky notification monitor with follow-gate trust tiers and cursor-based dedup |
-| **github-poller** | Ready-to-use GitHub repo monitor for issues, PRs, comments, and reviews with self-filtering |
 
 Built-in skills are read-only and synced from the open-strix package. They live in `.open_strix_builtin_skills/` (gitignored) and are refreshed on every startup.
+
+Service-specific pollers are available from [ClawHub](https://clawhub.ai):
+
+| Skill | What it does |
+|-------|-------------|
+| **bluesky-poller** | Bluesky notification monitor with follow-gate trust tiers and cursor-based dedup |
+| **github-poller** | GitHub repo monitor for issues, PRs, comments, and reviews with self-filtering |
 
 ### Disabling builtins
 
