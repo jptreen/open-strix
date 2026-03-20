@@ -145,12 +145,17 @@ def run_eval(climb_dir: Path, config: dict) -> dict | None:
         return None
 
 
-def create_climber_agent(model_name: str, climb_dir: Path):
+def create_climber_agent(
+    model_name: str,
+    climb_dir: Path,
+    skills: list[str] | None = None,
+):
     """Create a LangGraph DeepAgent configured for climbing.
 
     The agent gets built-in file tools (read, write, edit, glob, grep)
-    and shell execution. No skills, no memory blocks — just tools and
-    a system prompt.
+    and shell execution. Skills are inherited from the parent agent —
+    if the operator has a coding agent configured, the climber gets it
+    too. No memory blocks, just tools and a system prompt.
     """
     from deepagents import create_deep_agent
     from deepagents.backends import FilesystemBackend
@@ -181,6 +186,7 @@ def create_climber_agent(model_name: str, climb_dir: Path):
         system_prompt=system_prompt,
         backend=backend,
         name="climber",
+        skills=skills or None,
     )
 
 
@@ -300,7 +306,7 @@ def git_revert_workspace(climb_dir: Path):
         print(f"Git revert failed: {e}", file=sys.stderr)
 
 
-def climb_loop(climb_dir: Path, model_name: str):
+def climb_loop(climb_dir: Path, model_name: str, skills: list[str] | None = None):
     """Main climbing loop. Runs until killed or budget exhausted."""
     config = load_config(climb_dir)
     program = load_program(climb_dir)
@@ -310,10 +316,12 @@ def climb_loop(climb_dir: Path, model_name: str):
 
     print(f"Climber starting: {config.get('climb_id', 'unknown')}")
     print(f"Model: {model_name}, Max iterations: {max_iterations}, Window: {results_window}")
+    if skills:
+        print(f"Inherited skills: {skills}")
 
     # Create the agent once — reused across iterations but each invocation
     # is independent (no accumulated conversation state)
-    agent = create_climber_agent(model_name, climb_dir)
+    agent = create_climber_agent(model_name, climb_dir, skills=skills)
 
     while True:
         iteration = get_iteration_count(climb_dir)
@@ -439,6 +447,13 @@ def main():
         default=None,
         help="File descriptor for heartbeat pipe from supervisor",
     )
+    parser.add_argument(
+        "--skills",
+        nargs="*",
+        default=None,
+        help="Skill directory paths inherited from parent agent. "
+        "The climber gets whatever tools the operator has configured.",
+    )
     args = parser.parse_args()
 
     # Start heartbeat monitor if supervisor passed a pipe fd
@@ -463,7 +478,7 @@ def main():
     )
 
     try:
-        climb_loop(climb_dir, model_name)
+        climb_loop(climb_dir, model_name, skills=args.skills)
     except KeyboardInterrupt:
         print("\nClimber stopped by signal")
         sys.exit(0)

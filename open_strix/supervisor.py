@@ -89,6 +89,7 @@ class Supervisor:
         *,
         model: str | None = None,
         env: dict | None = None,
+        skills: list[str] | None = None,
     ):
         """Register a new climb and start it.
 
@@ -99,6 +100,9 @@ class Supervisor:
             model: LangGraph model string (e.g., "anthropic:claude-sonnet-4-6").
                 Overrides CLIMBER_MODEL env var.
             env: Optional extra environment variables for the climber process
+            skills: Skill directory paths inherited from the parent agent.
+                The climber gets whatever tools the operator has configured —
+                if they have a coding agent, the climber gets it too.
         """
         climb_dir = Path(climb_dir).resolve()
 
@@ -119,10 +123,11 @@ class Supervisor:
             "registered_at": datetime.now(timezone.utc).isoformat(),
             "model": model,
             "env": env or {},
+            "skills": skills or [],
         }
         self._save_manifest(manifest)
 
-        self._spawn(climb_id, climb_dir, model=model, env=env or {})
+        self._spawn(climb_id, climb_dir, model=model, env=env or {}, skills=skills or [])
 
     def unregister(self, climb_id: str):
         """Stop a climb and remove it from the manifest."""
@@ -169,6 +174,7 @@ class Supervisor:
                 climb_dir,
                 model=entry.get("model"),
                 env=entry.get("env", {}),
+                skills=entry.get("skills", []),
             )
 
     def stop_all(self):
@@ -314,6 +320,7 @@ class Supervisor:
         *,
         model: str | None = None,
         env: dict,
+        skills: list[str] | None = None,
     ):
         """Spawn a climber subprocess with heartbeat pipe.
 
@@ -336,6 +343,8 @@ class Supervisor:
         cmd = [python, str(CLIMBER_SCRIPT), str(climb_dir), "--heartbeat-fd", str(read_fd)]
         if model:
             cmd.extend(["--model", model])
+        if skills:
+            cmd.extend(["--skills"] + skills)
 
         with open(stdout_log, "a") as log_file:
             if sys.platform == "win32":

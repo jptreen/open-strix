@@ -54,6 +54,12 @@ The climber is a fundamentally different kind of subagent from identity agents:
 2. **Workspace + evaluation** — The harness. Evaluation logic is held in supervisor memory (not on disk). The climber operates within the workspace scope.
 3. **Results log** — Sliding window of recent results (last N entries via ring buffer). This prevents context growth while maintaining enough history for informed search (Law 5).
 
+### Skill Inheritance
+
+The climber inherits whatever skills and tools the parent agent has configured. If the operator has set up a coding agent (e.g., acpx), the climber gets it automatically — no separate configuration needed. If not, the climber still works with built-in file tools.
+
+This means the first test climb from an agent without a coding agent gets lightweight tools (file read/write/edit). A code-optimization climb launched from an agent WITH a coding agent gets the full toolset. Zero config, correct by default.
+
 ### Fixed Context Constraint
 
 **This is load-bearing.** Every iteration must wake up with roughly the same sized context. No accumulated conversational history. Each iteration is a fresh agent invocation that reads: program.md + current workspace files + last N log entries. That's it.
