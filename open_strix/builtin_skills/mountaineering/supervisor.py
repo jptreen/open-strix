@@ -4,7 +4,7 @@ Mountaineering supervisor — manages the climber lifecycle.
 
 Handles:
 - Manifest-based registration (which climbs are active)
-- Process spawning with parent-death signal
+- Process spawning with heartbeat pipe (cross-platform parent-death detection)
 - Manifest-driven restart on supervisor recovery
 - Status reporting for the monitoring block
 
@@ -20,7 +20,6 @@ Usage from an open-strix agent:
 
 import json
 import os
-import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -38,6 +37,7 @@ class Supervisor:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.state_dir / "climbers.json"
         self._processes: dict[str, subprocess.Popen] = {}
+        self._heartbeat_fds: dict[str, int] = {}  # write-end fds for heartbeat pipes
 
     def _load_manifest(self) -> dict:
         """Load the manifest of registered climbs."""
@@ -78,7 +78,15 @@ class Supervisor:
 
     def unregister(self, climb_id: str):
         """Stop a climb and remove it from the manifest."""
-        # Kill the process if running
+        # Close heartbeat pipe — this triggers the child's heartbeat monitor
+        fd = self._heartbeat_fds.pop(climb_id, None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+        # Also send SIGTERM as a belt-and-suspenders measure
         proc = self._processes.pop(climb_id, None)
         if proc and proc.poll() is None:
             proc.terminate()
@@ -104,6 +112,15 @@ class Supervisor:
 
     def stop_all(self):
         """Stop all running climbers."""
+        # Close all heartbeat pipes first — triggers child exit via EOF
+        for climb_id in list(self._heartbeat_fds.keys()):
+            fd = self._heartbeat_fds.pop(climb_id)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+        # Then terminate any that didn't exit from heartbeat
         for climb_id in list(self._processes.keys()):
             proc = self._processes.pop(climb_id)
             if proc.poll() is None:
@@ -215,7 +232,13 @@ class Supervisor:
         return "\n".join(lines)
 
     def _spawn(self, climb_id: str, climb_dir: Path, env: dict):
-        """Spawn a climber subprocess."""
+        """Spawn a climber subprocess with heartbeat pipe.
+
+        The heartbeat pipe is the cross-platform parent-death mechanism:
+        supervisor holds write end, child holds read end. When supervisor
+        dies, write end closes → child's blocking read returns EOF → child
+        exits. Works on Linux, macOS, and Windows.
+        """
         # Build environment
         child_env = os.environ.copy()
         child_env.update(env)
@@ -227,16 +250,35 @@ class Supervisor:
         log_dir.mkdir(parents=True, exist_ok=True)
         stdout_log = log_dir / "climber_stdout.log"
 
-        with open(stdout_log, "a") as log_file:
-            proc = subprocess.Popen(
-                [python, str(CLIMBER_SCRIPT), str(climb_dir)],
-                env=child_env,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                # prctl is set inside climber.py itself
-            )
+        # Create heartbeat pipe — supervisor holds write end, child holds read end
+        read_fd, write_fd = os.pipe()
 
+        with open(stdout_log, "a") as log_file:
+            # On Windows, pass_fds isn't supported — use os.set_inheritable instead
+            if sys.platform == "win32":
+                os.set_inheritable(read_fd, True)
+                proc = subprocess.Popen(
+                    [python, str(CLIMBER_SCRIPT), str(climb_dir), "--heartbeat-fd", str(read_fd)],
+                    env=child_env,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    close_fds=False,
+                )
+            else:
+                proc = subprocess.Popen(
+                    [python, str(CLIMBER_SCRIPT), str(climb_dir), "--heartbeat-fd", str(read_fd)],
+                    env=child_env,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    pass_fds=(read_fd,),
+                )
+
+        # Close the read end in the parent — only child needs it
+        os.close(read_fd)
+
+        # Store both the process and write_fd so we can clean up
         self._processes[climb_id] = proc
+        self._heartbeat_fds[climb_id] = write_fd
         print(f"Spawned climber {climb_id} (pid={proc.pid})")
 
 

@@ -163,10 +163,10 @@ Active climbs are tracked in a manifest file (`climbers.json` or `climbers/` dir
 
 ### Lifecycle (Erlang Supervisor Pattern)
 
-1. **Register** — write manifest entry + spawn child process
-2. **Parent dies** — kernel SIGTERM's children (via `prctl(PR_SET_PDEATHSIG)`) → no orphans
+1. **Register** — write manifest entry + spawn child with heartbeat pipe
+2. **Parent dies** — heartbeat pipe write-end closes → child's blocking read returns EOF → child exits. Cross-platform (Linux/macOS/Windows), no OS-specific APIs.
 3. **Parent restarts** — reads manifest → spawns all registered climbers fresh
-4. **Unregister** — SIGTERM child + remove manifest entry
+4. **Unregister** — close heartbeat pipe + SIGTERM child + remove manifest entry
 
 Restart is free because the fixed-context design means every iteration already starts fresh. The climber doesn't know it was killed.
 

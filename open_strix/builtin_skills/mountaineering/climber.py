@@ -24,23 +24,29 @@ Environment:
 
 import json
 import os
-import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- Erlang supervisor pattern: die when parent dies ---
-try:
-    import ctypes
-    import ctypes.util
 
-    _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-    PR_SET_PDEATHSIG = 1
-    _libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
-except Exception:
-    pass  # Non-Linux or ctypes unavailable — skip
+def _start_heartbeat_monitor(fd: int):
+    """Monitor the heartbeat pipe from the supervisor.
+
+    When the supervisor dies (any OS), the write end closes, read returns
+    EOF, and we exit. Cross-platform: no prctl, no Windows Job Objects.
+    """
+    def _monitor():
+        try:
+            os.read(fd, 1)  # blocks until parent dies → EOF
+        except OSError:
+            pass
+        os._exit(0)
+
+    t = threading.Thread(target=_monitor, daemon=True)
+    t.start()
 
 
 def load_config(climb_dir: Path) -> dict:
@@ -443,11 +449,23 @@ def climb_loop(climb_dir: Path):
 
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <climb-directory>", file=sys.stderr)
-        sys.exit(1)
+    import argparse
 
-    climb_dir = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description="Mountaineering climber runtime")
+    parser.add_argument("climb_dir", help="Path to climb directory")
+    parser.add_argument(
+        "--heartbeat-fd",
+        type=int,
+        default=None,
+        help="File descriptor for heartbeat pipe from supervisor (cross-platform parent-death detection)",
+    )
+    args = parser.parse_args()
+
+    # Start heartbeat monitor if supervisor passed a pipe fd
+    if args.heartbeat_fd is not None:
+        _start_heartbeat_monitor(args.heartbeat_fd)
+
+    climb_dir = Path(args.climb_dir).resolve()
     if not climb_dir.is_dir():
         print(f"ERROR: {climb_dir} is not a directory", file=sys.stderr)
         sys.exit(1)
