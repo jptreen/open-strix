@@ -178,6 +178,35 @@ def _shell_tool_name() -> str:
     return "bash"
 
 
+# ---------------------------------------------------------------------------
+# Bash command classification: detect file-read operations in shell commands
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate a file read operation.  Each regex captures the
+# first file-path-like argument so we can log *what* was read.
+_READ_CMD_PATTERNS: list[re.Pattern[str]] = [
+    # cat, head, tail, less, more  (with optional flags like -n 50)
+    re.compile(r"\b(?:cat|head|tail|less|more)\b[\s]+(?:-[^\s]+\s+)*([^\s|>;]+)"),
+    # sed reading a file (sed '...' /path/to/file)
+    re.compile(r"\bsed\b\s+(?:'[^']*'|\"[^\"]*\")\s+([^\s|>;]+)"),
+    # awk reading a file (awk '...' /path/to/file)
+    re.compile(r"\bawk\b\s+(?:'[^']*'|\"[^\"]*\")\s+([^\s|>;]+)"),
+]
+
+
+def _extract_read_paths(command: str) -> list[str]:
+    """Return file paths that *look like* read targets in a shell command."""
+    paths: list[str] = []
+    for pattern in _READ_CMD_PATTERNS:
+        for m in pattern.finditer(command):
+            candidate = m.group(1)
+            # Skip things that are clearly not file paths
+            if candidate.startswith("-") or candidate in ("", "/dev/null"):
+                continue
+            paths.append(candidate)
+    return paths
+
+
 def _shell_command_for_platform(command: str) -> list[str]:
     if os.name == "nt":
         return [
@@ -624,7 +653,174 @@ class ToolsMixin:
                 timeout_seconds=timeout_seconds,
                 command=normalized_command,
             )
+
+            # Classify bash commands that read files so DAG traversal
+            # analysis can detect read patterns even without dedicated
+            # read_file tool usage.
+            if completed.returncode == 0:
+                for rpath in _extract_read_paths(normalized_command):
+                    self.log_event(
+                        "file_read",
+                        tool=shell_tool_name,
+                        file_path=rpath,
+                        via="bash_classify",
+                    )
+
             return f"[exit_code={completed.returncode}]\n{combined}"
+
+        @tool("read_file")
+        async def read_file(
+            file_path: str,
+            offset: int = 0,
+            limit: int = 2000,
+        ) -> str:
+            """Read a file and return its contents with line numbers.
+
+            Args:
+                file_path: Absolute or relative path to the file.
+                offset: Line number to start reading from (0-based).
+                limit: Maximum number of lines to return.
+            """
+            resolved = Path(file_path).expanduser().resolve()
+            if not resolved.is_file():
+                self.log_event(
+                    "tool_call_error",
+                    tool="read_file",
+                    error_type="not_found",
+                    file_path=str(resolved),
+                )
+                return f"File not found: {resolved}"
+
+            try:
+                text = await asyncio.to_thread(resolved.read_text, encoding="utf-8", errors="replace")
+            except OSError as exc:
+                self.log_event(
+                    "tool_call_error",
+                    tool="read_file",
+                    error_type="os_error",
+                    file_path=str(resolved),
+                )
+                return f"Error reading {resolved}: {exc}"
+
+            lines = text.splitlines()
+            selected = lines[offset : offset + limit]
+            numbered = [f"{i + offset + 1:6d}\t{line}" for i, line in enumerate(selected)]
+            result = "\n".join(numbered)
+            if not result:
+                result = "(empty file)"
+
+            self.log_event(
+                "file_read",
+                tool="read_file",
+                file_path=str(resolved),
+                offset=offset,
+                limit=limit,
+                lines_returned=len(selected),
+                total_lines=len(lines),
+            )
+            return result
+
+        @tool("glob")
+        async def glob_files(
+            pattern: str,
+            path: str = ".",
+        ) -> str:
+            """Find files matching a glob pattern.
+
+            Args:
+                pattern: Glob pattern (e.g. '**/*.py', 'state/*.md').
+                path: Directory to search in. Defaults to current directory.
+            """
+            base = Path(path).expanduser().resolve()
+            if not base.is_dir():
+                return f"Not a directory: {base}"
+
+            try:
+                matches = sorted(base.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            except OSError as exc:
+                return f"Error during glob: {exc}"
+
+            # Cap output
+            capped = matches[:200]
+            result_lines = [str(m) for m in capped]
+            suffix = f"\n... and {len(matches) - 200} more" if len(matches) > 200 else ""
+
+            self.log_event(
+                "tool_call",
+                tool="glob",
+                pattern=pattern,
+                path=str(base),
+                matches=len(matches),
+            )
+            return "\n".join(result_lines) + suffix if result_lines else "No matches."
+
+        @tool("edit_file")
+        async def edit_file(
+            file_path: str,
+            old_string: str,
+            new_string: str,
+        ) -> str:
+            """Replace an exact string in a file.
+
+            Args:
+                file_path: Path to the file to modify.
+                old_string: The exact text to find and replace (must be unique in the file).
+                new_string: The replacement text.
+            """
+            resolved = Path(file_path).expanduser().resolve()
+            if not resolved.is_file():
+                return f"File not found: {resolved}"
+
+            try:
+                content = await asyncio.to_thread(resolved.read_text, encoding="utf-8")
+            except OSError as exc:
+                return f"Error reading {resolved}: {exc}"
+
+            count = content.count(old_string)
+            if count == 0:
+                return "old_string not found in file."
+            if count > 1:
+                return f"old_string appears {count} times — must be unique. Provide more context."
+
+            new_content = content.replace(old_string, new_string, 1)
+            try:
+                await asyncio.to_thread(resolved.write_text, new_content, encoding="utf-8")
+            except OSError as exc:
+                return f"Error writing {resolved}: {exc}"
+
+            self.log_event(
+                "tool_call",
+                tool="edit_file",
+                file_path=str(resolved),
+            )
+            return f"Edited {resolved}"
+
+        @tool("write_file")
+        async def write_file(
+            file_path: str,
+            content: str,
+        ) -> str:
+            """Write content to a file, creating it if needed.
+
+            Args:
+                file_path: Path to the file to write.
+                content: The full content to write.
+            """
+            resolved = Path(file_path).expanduser().resolve()
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                await asyncio.to_thread(resolved.write_text, content, encoding="utf-8")
+            except OSError as exc:
+                return f"Error writing {resolved}: {exc}"
+
+            self.log_event(
+                "tool_call",
+                tool="write_file",
+                file_path=str(resolved),
+                bytes_written=len(content.encode("utf-8")),
+            )
+            return f"Wrote {resolved} ({len(content)} chars)"
 
         @tool("fetch_url")
         async def fetch_url(
