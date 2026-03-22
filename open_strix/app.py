@@ -51,7 +51,7 @@ from .discord import (
 )
 from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_folders_section, render_turn_prompt
-from .readonly_backend import BUILTIN_SKILLS_ROUTE, WriteGuardBackend, build_builtin_skills_backend
+from .readonly_backend import BUILTIN_SKILLS_ROUTE, LoggingWriteGuardBackend, build_builtin_skills_backend
 from .scheduler import SchedulerJob, SchedulerMixin
 from .supervisor import Supervisor
 from .tools import (
@@ -433,9 +433,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
 
     def _create_agent(self, extra_tools: list[Any] | None = None) -> Any:
         """Build the LangGraph agent with all tools."""
-        mutable_backend = WriteGuardBackend(
+        mutable_backend = LoggingWriteGuardBackend(
             root_dir=self.home,
             writable_dirs=self.config.writable_dirs,
+            events_log_path=str(self.layout.events_log),
+            session_id=self.session_id,
         )
         builtin_backend = build_builtin_skills_backend(root_dir=self.home / BUILTIN_HOME_DIRNAME)
         backend = CompositeBackend(

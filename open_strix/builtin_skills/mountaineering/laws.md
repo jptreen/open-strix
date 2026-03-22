@@ -54,19 +54,34 @@ The same evaluation uses binary yes/no questions: "Is the prediction falsifiable
 
 ## Law 3: Safe Exploration
 
-**Failed experiments must be fully reversible.**
+**Failed experiments must be fully reversible — without collateral damage.**
 
-The mechanism doesn't matter — git revert, file copies, holding the previous version in memory, database snapshots. What matters is that trying something and failing costs nothing permanent.
+The rollback scope must match the modification scope. If the climber only modifies one data structure, rollback only affects that structure. Memories, journal entries, and other state must be untouchable.
 
 This is what enables the "try one change" pattern. Without reversibility, the optimizer becomes conservative (can't afford to try things that might fail) and convergence slows dramatically. With reversibility, every iteration is a free experiment.
 
+### ⚠️ `git revert` is toxic for stateful agents
+
+If the mutable surface lives in the same repository as memory blocks, journal, and state files, `git revert` nukes everything in that commit — including memories that formed during the experiment. Accidental forgetting for the sake of optimization is worse than no rollback at all.
+
+**Never use `git revert` as a rollback mechanism when agent state lives in git.**
+
+### Rollback values
+
+The right rollback mechanism depends on the climb. These are values to optimize for, not a checklist — each has real tradeoffs:
+
+- **Scope isolation** — rollback touches only what the climber modified. The narrower the blast radius, the safer the experiment. Tradeoff: requires upfront design of the mutable surface boundary.
+- **Auditability** — every change is logged, every rollback is traceable. An append-only operation log lets you replay history, not just undo it. Tradeoff: storage grows, and replay logic adds complexity.
+- **Graceful degradation** — failed experiments degrade quality rather than break things. Soft weights that decay, or additive-only changes that dilute rather than corrupt. Tradeoff: slower convergence, since bad changes linger rather than being cleanly removed.
+- **Simplicity** — the simplest mechanism you can get away with. Sometimes "just restore the previous version of one file" is all you need. Tradeoff: only works when the mutable surface is truly isolated to one artifact.
+
 ### What violation looks like
 
-A config-tuning climb modifies a production config file directly. An iteration introduces a bad value. The evaluator catches it (score drops), but the previous config wasn't saved. The operator must manually reconstruct the last-known-good config from memory or logs. The climb stalls while the damage is repaired.
+A stateful agent uses `git revert` to undo a bad change to its workspace. The revert also removes three journal entries, a memory block update, and a state file change that happened in the same commit window. The agent "forgets" context from the experiment period. The climb optimized one thing at the cost of agent coherence.
 
 ### What compliance looks like
 
-Before each change, the climber commits the current state to git. If the change hurts the score, `git checkout HEAD~1 -- workspace/` restores the previous state instantly. The revert is tested, not assumed — it runs automatically as part of the iteration loop. Failed experiments are invisible to the final result.
+The climber writes proposed changes to an isolated workspace file. Each iteration, the evaluator scores the result with the changes applied. If the score drops, the workspace file is rolled back to its previous version. Journal, memory, and state files are never in the rollback path. Failed experiments are invisible to everything except the workspace.
 
 ### Connection to scope separation
 
