@@ -752,6 +752,13 @@ class ToolsMixin:
                 path=str(base),
                 matches=len(matches),
             )
+            for match_path in capped:
+                if match_path.is_file():
+                    self.log_event(
+                        "file_discovery",
+                        tool="glob",
+                        file_path=str(match_path),
+                    )
             return "\n".join(result_lines) + suffix if result_lines else "No matches."
 
         @tool("edit_file")
@@ -789,7 +796,12 @@ class ToolsMixin:
                 return f"Error writing {resolved}: {exc}"
 
             self.log_event(
-                "tool_call",
+                "file_read",
+                tool="edit_file",
+                file_path=str(resolved),
+            )
+            self.log_event(
+                "file_write",
                 tool="edit_file",
                 file_path=str(resolved),
             )
@@ -815,7 +827,7 @@ class ToolsMixin:
                 return f"Error writing {resolved}: {exc}"
 
             self.log_event(
-                "tool_call",
+                "file_write",
                 tool="write_file",
                 file_path=str(resolved),
                 bytes_written=len(content.encode("utf-8")),
@@ -922,6 +934,11 @@ class ToolsMixin:
                 status=fetched["status"],
                 bytes=fetched["bytes"],
                 file_path=body_virtual_path,
+            )
+            self.log_event(
+                "file_write",
+                tool="fetch_url",
+                file_path=str(body_path),
             )
             return yaml.safe_dump(payload, sort_keys=False)
 
@@ -1062,6 +1079,16 @@ class ToolsMixin:
             )
             checkpoint = self.layout.checkpoint_file.read_text(encoding="utf-8")
             self.log_event("tool_call", tool="journal")
+            self.log_event(
+                "file_write",
+                tool="journal",
+                file_path=str(self.layout.journal_log),
+            )
+            self.log_event(
+                "file_read",
+                tool="journal",
+                file_path=str(self.layout.checkpoint_file),
+            )
             return checkpoint
 
         @tool("react")
@@ -1145,6 +1172,14 @@ class ToolsMixin:
                 ],
             }
             self.log_event("tool_call", tool="list_memory_blocks", count=len(payload["blocks"]))
+            for block in blocks:
+                block_path = self._find_memory_block_path(block["id"])
+                if block_path is not None:
+                    self.log_event(
+                        "file_read",
+                        tool="list_memory_blocks",
+                        file_path=str(block_path),
+                    )
             return yaml.safe_dump(payload, sort_keys=False)
 
         @tool("create_memory_block")
@@ -1169,7 +1204,12 @@ class ToolsMixin:
             }
             target = self._memory_block_path(chosen_id)
             target.write_text(yaml.safe_dump(block, sort_keys=False), encoding="utf-8")
-            self.log_event("tool_call", tool="create_memory_block", block_id=chosen_id)
+            self.log_event(
+                "file_write",
+                tool="create_memory_block",
+                file_path=str(target),
+                block_id=chosen_id,
+            )
             return f"Created memory block '{chosen_id}'."
 
         @tool("update_memory_block")
@@ -1204,7 +1244,18 @@ class ToolsMixin:
                 return "No fields provided. Pass at least one of name, text, sort_order."
 
             path.write_text(yaml.safe_dump(loaded, sort_keys=False), encoding="utf-8")
-            self.log_event("tool_call", tool="update_memory_block", block_id=normalized_id)
+            self.log_event(
+                "file_read",
+                tool="update_memory_block",
+                file_path=str(path),
+                block_id=normalized_id,
+            )
+            self.log_event(
+                "file_write",
+                tool="update_memory_block",
+                file_path=str(path),
+                block_id=normalized_id,
+            )
             return f"Updated memory block '{normalized_id}'."
 
         @tool("delete_memory_block")
@@ -1215,7 +1266,13 @@ class ToolsMixin:
             if path is None:
                 return f"memory block '{normalized_id}' not found."
             path.unlink()
-            self.log_event("tool_call", tool="delete_memory_block", block_id=normalized_id)
+            self.log_event(
+                "file_write",
+                tool="delete_memory_block",
+                file_path=str(path),
+                block_id=normalized_id,
+                action="delete",
+            )
             return f"Deleted memory block '{normalized_id}'."
 
         @tool("list_schedules")
@@ -1223,6 +1280,11 @@ class ToolsMixin:
             """List scheduler jobs from scheduler.yaml."""
             jobs = [job.to_dict() for job in self._load_scheduler_jobs()]
             self.log_event("tool_call", tool="list_schedules", count=len(jobs))
+            self.log_event(
+                "file_read",
+                tool="list_schedules",
+                file_path=str(self.layout.scheduler_file),
+            )
             return yaml.safe_dump({"jobs": jobs}, sort_keys=False)
 
         @tool("add_schedule")
@@ -1249,7 +1311,12 @@ class ToolsMixin:
             )
             self._save_scheduler_jobs(jobs)
             self._reload_scheduler_jobs()
-            self.log_event("tool_call", tool="add_schedule", name=name)
+            self.log_event(
+                "file_write",
+                tool="add_schedule",
+                file_path=str(self.layout.scheduler_file),
+                name=name,
+            )
             return f"Added schedule '{name}'."
 
         @tool("remove_schedule")
@@ -1259,7 +1326,13 @@ class ToolsMixin:
             after = [job for job in before if job.name != name]
             self._save_scheduler_jobs(after)
             self._reload_scheduler_jobs()
-            self.log_event("tool_call", tool="remove_schedule", name=name, removed=len(before) - len(after))
+            self.log_event(
+                "file_write",
+                tool="remove_schedule",
+                file_path=str(self.layout.scheduler_file),
+                name=name,
+                removed=len(before) - len(after),
+            )
             return f"Removed {len(before) - len(after)} schedule(s) named '{name}'."
 
         @tool("reload_pollers")
