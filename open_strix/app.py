@@ -17,6 +17,7 @@ import discord
 import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from deepagents import create_deep_agent
+from deepagents.middleware.subagents import SubAgent
 from deepagents.backends import FilesystemBackend
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
@@ -469,13 +470,33 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         if extra_tools:
             tools.extend(extra_tools)
 
+        subagents = self._build_subagents()
+
         return create_deep_agent(
             model=model,
             tools=tools,
             system_prompt=system_prompt,
             backend=backend,
             skills=skills,
+            subagents=subagents or None,
         )
+
+    def _build_subagents(self) -> list[SubAgent]:
+        """Build SubAgent specs from config.yaml subagents list."""
+        if not self.config.subagents:
+            return []
+
+        specs: list[SubAgent] = []
+        for cfg in self.config.subagents:
+            spec: SubAgent = {
+                "name": cfg.name,
+                "description": cfg.description,
+                "system_prompt": cfg.system_prompt or "You are a helpful assistant. Complete the task described below.",
+            }
+            if cfg.model:
+                spec["model"] = _model_for_deep_agents(cfg.model)
+            specs.append(spec)
+        return specs
 
     def _skill_root_for_source(self, source: str) -> Path | None:
         if source == "/skills":
