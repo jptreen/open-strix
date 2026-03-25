@@ -177,6 +177,16 @@ class RepoLayout:
 
 
 @dataclass
+class SubAgentConfig:
+    """Configuration for a custom subagent type."""
+    name: str
+    description: str
+    model: str = ""
+    system_prompt: str = ""
+    allowed_tools: list[str] | None = None  # None = inherit all tools
+
+
+@dataclass
 class AppConfig:
     model: str = DEFAULT_MODEL
     model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
@@ -193,6 +203,7 @@ class AppConfig:
     folders: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_FOLDERS))
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     disable_builtin_skills: set[str] = field(default_factory=set)
+    subagents: list[SubAgentConfig] = field(default_factory=list)
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -239,6 +250,27 @@ def _parse_folders(raw: Any) -> dict[str, str]:
     return folders if folders else dict(DEFAULT_FOLDERS)
 
 
+def _parse_subagent_configs(raw: Any) -> list[SubAgentConfig]:
+    """Parse subagent configurations from config.yaml."""
+    if not isinstance(raw, list):
+        return []
+    configs: list[SubAgentConfig] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        configs.append(SubAgentConfig(
+            name=name,
+            description=str(item.get("description", "")).strip(),
+            model=str(item.get("model", "")).strip(),
+            system_prompt=str(item.get("system_prompt", "")).strip(),
+            allowed_tools=item.get("allowed_tools"),
+        ))
+    return configs
+
+
 def load_config(layout: RepoLayout) -> AppConfig:
     loaded = yaml.safe_load(layout.config_file.read_text(encoding="utf-8")) or {}
     model_raw = loaded.get("model", DEFAULT_MODEL)
@@ -262,6 +294,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         folders=_parse_folders(loaded.get("folders")),
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
+        subagents=_parse_subagent_configs(loaded.get("subagents")),
     )
 
 
