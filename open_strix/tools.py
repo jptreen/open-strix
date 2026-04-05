@@ -19,7 +19,7 @@ import yaml
 from langchain_core.tools import ToolException, tool
 
 from .discord import ERROR_REACTION_EMOJI, WARNING_REACTION_EMOJI
-from .scheduler import SchedulerJob
+from .scheduler import SchedulerJob, _SCHEDULER_LOCK
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
@@ -1299,18 +1299,19 @@ class ToolsMixin:
             if bool(cron) == bool(time_of_day):
                 return "Exactly one of cron or time_of_day must be provided."
 
-            jobs = [job for job in self._load_scheduler_jobs() if job.name != name]
-            jobs.append(
-                SchedulerJob(
-                    name=name.strip(),
-                    prompt=prompt.strip(),
-                    cron=cron.strip() if cron else None,
-                    time_of_day=time_of_day.strip() if time_of_day else None,
-                    channel_id=channel_id.strip() if channel_id else None,
-                ),
-            )
-            self._save_scheduler_jobs(jobs)
-            self._reload_scheduler_jobs()
+            with _SCHEDULER_LOCK:
+                jobs = [job for job in self._load_scheduler_jobs() if job.name != name]
+                jobs.append(
+                    SchedulerJob(
+                        name=name.strip(),
+                        prompt=prompt.strip(),
+                        cron=cron.strip() if cron else None,
+                        time_of_day=time_of_day.strip() if time_of_day else None,
+                        channel_id=channel_id.strip() if channel_id else None,
+                    ),
+                )
+                self._save_scheduler_jobs(jobs)
+                self._reload_scheduler_jobs()
             self.log_event(
                 "file_write",
                 tool="add_schedule",
@@ -1322,10 +1323,11 @@ class ToolsMixin:
         @tool("remove_schedule")
         def remove_schedule(name: str) -> str:
             """Remove a scheduler job by name."""
-            before = self._load_scheduler_jobs()
-            after = [job for job in before if job.name != name]
-            self._save_scheduler_jobs(after)
-            self._reload_scheduler_jobs()
+            with _SCHEDULER_LOCK:
+                before = self._load_scheduler_jobs()
+                after = [job for job in before if job.name != name]
+                self._save_scheduler_jobs(after)
+                self._reload_scheduler_jobs()
             self.log_event(
                 "file_write",
                 tool="remove_schedule",

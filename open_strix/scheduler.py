@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
@@ -46,6 +48,9 @@ class PollerConfig:
     skill_dir: Path
 
 
+_SCHEDULER_LOCK = threading.RLock()
+
+
 class SchedulerMixin:
     def _load_scheduler_jobs(self) -> list[SchedulerJob]:
         if not self.layout.scheduler_file.exists():
@@ -81,10 +86,30 @@ class SchedulerMixin:
 
     def _save_scheduler_jobs(self, jobs: list[SchedulerJob]) -> None:
         data = {"jobs": [job.to_dict() for job in jobs]}
-        self.layout.scheduler_file.write_text(
-            yaml.safe_dump(data, sort_keys=False),
-            encoding="utf-8",
+        content = yaml.safe_dump(data, sort_keys=False)
+        target = self.layout.scheduler_file
+        fd, tmp = tempfile.mkstemp(
+            dir=str(target.parent), prefix=".scheduler.", suffix=".tmp"
         )
+        try:
+            os.write(fd, content.encode("utf-8"))
+            os.fsync(fd)
+            os.close(fd)
+            try:
+                os.chmod(tmp, os.stat(str(target)).st_mode & 0o777)
+            except (OSError, FileNotFoundError):
+                os.chmod(tmp, 0o644)
+            os.replace(tmp, str(target))
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def _discover_pollers(self) -> list[PollerConfig]:
         """Scan skill directories for pollers.json files."""
