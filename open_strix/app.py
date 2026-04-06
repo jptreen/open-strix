@@ -588,6 +588,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 continue  # block deleted between glob and read (TOCTOU race)
+            except yaml.YAMLError as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Skipping corrupted block %s: %s", path.name, exc,
+                )
+                continue
             if not isinstance(loaded, dict):
                 continue
 
@@ -794,6 +800,21 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         return sent
 
+    def _validate_memory_blocks(self) -> list[str]:
+        """Check all block YAML files for parse errors. Returns list of error descriptions."""
+        errors: list[str] = []
+        for path in self._iter_block_files():
+            try:
+                loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            except yaml.YAMLError as exc:
+                errors.append(f"{path.name}: {exc}")
+                continue
+            if not isinstance(loaded, dict):
+                errors.append(f"{path.name}: expected a YAML mapping, got {type(loaded).__name__}")
+        return errors
+
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
@@ -817,6 +838,35 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 channel_id=event.channel_id,
                 final_text=final_text,
             )
+
+            # Post-turn hook: validate memory blocks and let agent self-correct
+            block_errors = self._validate_memory_blocks()
+            if block_errors:
+                error_list = "\n".join(f"  - {e}" for e in block_errors)
+                repair_prompt = (
+                    "SYSTEM: Your turn just ended but some memory blocks have invalid YAML. "
+                    "Fix them now using update_memory_block (which always produces valid YAML). "
+                    "Do NOT use bash, write_file, or edit_file to fix block files.\n\n"
+                    f"Broken blocks:\n{error_list}"
+                )
+                self.log_event(
+                    "post_turn_block_validation_failed",
+                    broken_blocks=[e.split(":")[0] for e in block_errors],
+                    error_count=len(block_errors),
+                )
+                async with self._typing_indicator(event):
+                    result = await self.agent.ainvoke(
+                        {"messages": [HumanMessage(content=repair_prompt)]}
+                    )
+                self._log_agent_trace(result)
+                # Check again — log but don't loop
+                remaining_errors = self._validate_memory_blocks()
+                if remaining_errors:
+                    self.log_event(
+                        "post_turn_block_validation_still_broken",
+                        broken_blocks=[e.split(":")[0] for e in remaining_errors],
+                    )
+
             await self._run_post_turn_git_sync(event)
         finally:
             self._reset_send_message_circuit_breaker()

@@ -819,6 +819,7 @@ class ToolsMixin:
                 content: The full content to write.
             """
             resolved = Path(file_path).expanduser().resolve()
+
             resolved.parent.mkdir(parents=True, exist_ok=True)
 
             try:
