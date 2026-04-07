@@ -287,7 +287,7 @@ jq --arg ch "1474541386467377273" 'select(.type == "discord_message" and .channe
 
 ## REST API
 
-When `api_port` is set in `config.yaml` (default: `0` = disabled), open-strix runs a loopback HTTP server for injecting events programmatically.
+When `api_port` is set in `config.yaml` (default: `8082`; `0` disables it), open-strix runs a loopback HTTP server for injecting events programmatically.
 
 ### `POST /api/event`
 
@@ -326,7 +326,7 @@ Returns `{"status": "ok"}` if the agent is running.
 
 In `config.yaml`:
 ```yaml
-api_port: 8082  # 0 = disabled (default)
+api_port: 8082  # default; 0 = disabled
 ```
 
 The API binds to `127.0.0.1` only — not accessible from the network. For external access, put it behind a reverse proxy with authentication.

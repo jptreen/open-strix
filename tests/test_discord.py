@@ -194,7 +194,7 @@ async def test_run_starts_discord_with_configured_token_env(
 ) -> None:
     _stub_agent_factory(monkeypatch)
     (tmp_path / "config.yaml").write_text(
-        "discord_token_env: OPEN_STRIX_DISCORD_TOKEN\n",
+        "discord_token_env: OPEN_STRIX_DISCORD_TOKEN\napi_port: 0\nweb_ui_port: 0\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("OPEN_STRIX_DISCORD_TOKEN", "fake-discord-token")
@@ -1688,6 +1688,7 @@ async def test_run_without_discord_token_announces_local_web_ui(
 
     _stub_agent_factory(monkeypatch)
     app = app_mod.OpenStrixApp(tmp_path)
+    app.config.api_port = 0
     app.config.web_ui_port = 8084
     app.config.web_ui_host = "0.0.0.0"
     monkeypatch.delenv(app.config.discord_token_env, raising=False)

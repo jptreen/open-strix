@@ -182,7 +182,7 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
-api_port: 0
+api_port: 8082
 web_ui_port: 8084
 web_ui_host: 127.0.0.1
 web_ui_channel_id: local-web

@@ -758,7 +758,7 @@ def _print_setup_walkthrough(home: Path) -> None:
         - discord_messages_in_prompt: number of recent Discord messages in prompt
         - discord_token_env: env var to read Discord token from (default DISCORD_TOKEN)
         - always_respond_bot_ids: bot IDs this agent is allowed to respond to
-        - api_port: loopback REST API port (0 disables it)
+        - api_port: loopback REST API port (default 8082; 0 disables it)
         - web_ui_port: built-in web chat port (default 8084; 0 disables it)
         - web_ui_host: bind host for the built-in web chat (default 127.0.0.1)
         - web_ui_channel_id: reserved channel ID used by the built-in web chat

@@ -55,6 +55,7 @@ async def test_live_open_strix_connects_to_discord(
     monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
 
     app = app_mod.OpenStrixApp(tmp_path)
+    app.config.api_port = 0
     run_task = asyncio.create_task(app.run())
     try:
         await _wait_for_ready(app, run_task, timeout_s=40.0)
@@ -80,6 +81,7 @@ async def test_live_send_message_tool_posts_to_channel(
 
     monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
     app = app_mod.OpenStrixApp(tmp_path)
+    app.config.api_port = 0
 
     run_task = asyncio.create_task(app.run())
     try:
