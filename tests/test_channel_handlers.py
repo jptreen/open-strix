@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from threading import Thread
@@ -487,11 +489,11 @@ class TestNonBlockingIO:
 
 
 class TestEventWorkerChannelType:
-    """Verify current_channel_type is set/reset by _event_worker."""
+    """Verify current_channel_type lifecycle in _event_worker."""
 
     @pytest.mark.asyncio
-    async def test_current_channel_type_set_from_event(self) -> None:
-        """AgentEvent carries channel_type through correctly."""
+    async def test_agent_event_carries_channel_type(self) -> None:
+        """AgentEvent dataclass correctly stores channel_type."""
         event = AgentEvent(
             event_type="poller",
             prompt="test",
@@ -500,3 +502,476 @@ class TestEventWorkerChannelType:
         )
         assert event.channel_type == "matrix"
         assert event.channel_id == "!room:matrix.org"
+
+    @pytest.mark.asyncio
+    async def test_channel_type_set_during_processing(self) -> None:
+        """_event_worker sets current_channel_type before calling _process_event."""
+        from open_strix.app import OpenStrixApp
+
+        app = OpenStrixApp.__new__(OpenStrixApp)
+        app.queue = asyncio.Queue()
+        app.current_channel_id = None
+        app.current_channel_type = None
+        app.current_event_label = None
+        app.current_turn_start = None
+        app.pending_scheduler_keys = set()
+        app._draining = False
+        app.log_event = lambda *a, **kw: None
+
+        captured_type = None
+
+        async def capture_and_drain(event):
+            nonlocal captured_type
+            captured_type = app.current_channel_type
+            # Signal drain so the worker exits after the finally block
+            app._draining = True
+
+        app._process_event = capture_and_drain
+
+        event = AgentEvent(
+            event_type="poller", prompt="test",
+            channel_id="!room:matrix.org", channel_type="matrix",
+        )
+        app.queue.put_nowait(event)
+
+        await app._event_worker()
+        assert captured_type == "matrix"
+
+    @pytest.mark.asyncio
+    async def test_channel_type_reset_after_success(self) -> None:
+        """current_channel_type is None after successful processing."""
+        from open_strix.app import OpenStrixApp
+
+        app = OpenStrixApp.__new__(OpenStrixApp)
+        app.queue = asyncio.Queue()
+        app.current_channel_id = None
+        app.current_channel_type = None
+        app.current_event_label = None
+        app.current_turn_start = None
+        app.pending_scheduler_keys = set()
+        app._draining = False
+        app.log_event = lambda *a, **kw: None
+
+        async def noop_process(event):
+            pass
+
+        app._process_event = noop_process
+
+        event = AgentEvent(
+            event_type="poller", prompt="test",
+            channel_id="!room:matrix.org", channel_type="matrix",
+        )
+        app.queue.put_nowait(event)
+
+        # Run worker in background, let it process one event then stop
+        async def stop_after_delay():
+            await asyncio.sleep(0.05)
+            app._draining = True
+            # Push a dummy event to unblock the queue.get()
+            app.queue.put_nowait(AgentEvent(event_type="dummy", prompt=""))
+
+        await asyncio.gather(app._event_worker(), stop_after_delay())
+        # After the first event (non-draining), channel_type should be reset
+        assert app.current_channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_channel_type_reset_after_exception(self) -> None:
+        """current_channel_type is None after _process_event raises."""
+        from open_strix.app import OpenStrixApp
+
+        app = OpenStrixApp.__new__(OpenStrixApp)
+        app.queue = asyncio.Queue()
+        app.current_channel_id = None
+        app.current_channel_type = None
+        app.current_event_label = None
+        app.current_turn_start = None
+        app.pending_scheduler_keys = set()
+        app._draining = False
+        app.log_event = lambda *a, **kw: None
+
+        async def exploding_process(event):
+            raise RuntimeError("boom")
+
+        app._process_event = exploding_process
+        app._react_to_latest_message = AsyncMock(return_value=False)
+        app.is_local_web_channel = lambda cid: False
+
+        event = AgentEvent(
+            event_type="poller", prompt="test",
+            channel_id="!room:matrix.org", channel_type="matrix",
+        )
+        app.queue.put_nowait(event)
+
+        async def stop_after_delay():
+            await asyncio.sleep(0.05)
+            app._draining = True
+            app.queue.put_nowait(AgentEvent(event_type="dummy", prompt=""))
+
+        await asyncio.gather(app._event_worker(), stop_after_delay())
+        assert app.current_channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_channel_type_reset_after_circuit_breaker(self) -> None:
+        """current_channel_type is None after SendMessageCircuitBreakerStop."""
+        from open_strix.app import OpenStrixApp
+        from open_strix.tools import SendMessageCircuitBreakerStop
+
+        app = OpenStrixApp.__new__(OpenStrixApp)
+        app.queue = asyncio.Queue()
+        app.current_channel_id = None
+        app.current_channel_type = None
+        app.current_event_label = None
+        app.current_turn_start = None
+        app.pending_scheduler_keys = set()
+        app._draining = False
+        app.log_event = lambda *a, **kw: None
+
+        async def circuit_breaker_process(event):
+            raise SendMessageCircuitBreakerStop("loop detected")
+
+        app._process_event = circuit_breaker_process
+
+        event = AgentEvent(
+            event_type="poller", prompt="test",
+            channel_id="!room:matrix.org", channel_type="matrix",
+        )
+        app.queue.put_nowait(event)
+
+        async def stop_after_delay():
+            await asyncio.sleep(0.05)
+            app._draining = True
+            app.queue.put_nowait(AgentEvent(event_type="dummy", prompt=""))
+
+        await asyncio.gather(app._event_worker(), stop_after_delay())
+        assert app.current_channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_none_channel_type_passthrough(self) -> None:
+        """Event with channel_type=None overwrites stale current_channel_type."""
+        from open_strix.app import OpenStrixApp
+
+        app = OpenStrixApp.__new__(OpenStrixApp)
+        app.queue = asyncio.Queue()
+        app.current_channel_id = None
+        app.current_channel_type = "stale_value"  # leftover from prior turn
+        app.current_event_label = None
+        app.current_turn_start = None
+        app.pending_scheduler_keys = set()
+        app._draining = False
+        app.log_event = lambda *a, **kw: None
+
+        captured_type = "sentinel"
+
+        async def capture_and_drain(event):
+            nonlocal captured_type
+            captured_type = app.current_channel_type
+            app._draining = True
+
+        app._process_event = capture_and_drain
+
+        event = AgentEvent(
+            event_type="poller", prompt="test",
+            channel_id="123", channel_type=None,
+        )
+        app.queue.put_nowait(event)
+
+        await app._event_worker()
+        assert captured_type is None
+
+
+class TestHttpResponseEdgeCases:
+    """Verify _send_via_http_handler handles non-standard responses correctly."""
+
+    @staticmethod
+    def _make_server(response_body: bytes, status: int = 200, content_type: str = "application/json"):
+        """Start an HTTP server returning a fixed response."""
+        received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                received.append(self.rfile.read(length))
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.end_headers()
+                self.wfile.write(response_body)
+
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, f"http://127.0.0.1:{port}", received
+
+    @staticmethod
+    def _make_app(url):
+        from open_strix.discord import DiscordMixin
+
+        class FakeApp(DiscordMixin):
+            def __init__(self):
+                self.config = AppConfig(
+                    channel_handlers={"matrix": {"send_url": f"{url}/send"}}
+                )
+                self.current_channel_type = "matrix"
+                self.discord_client = None
+                self.events = []
+
+            def log_event(self, event_type, **payload):
+                self.events.append({"type": event_type, **payload})
+
+            def is_local_web_channel(self, channel_id):
+                return False
+
+        return FakeApp()
+
+    @pytest.mark.asyncio
+    async def test_html_error_response(self) -> None:
+        """HTML response body (e.g. reverse proxy 502) returns success with no event_id."""
+        server, url, _ = self._make_server(
+            b"<html><body>502 Bad Gateway</body></html>",
+            content_type="text/html",
+        )
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id is None
+            assert chunks == 1
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_empty_response_body(self) -> None:
+        """Empty response body returns success with no event_id."""
+        server, url, _ = self._make_server(b"")
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id is None
+            assert chunks == 1
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_json_array_response(self) -> None:
+        """JSON array response returns success with no event_id."""
+        server, url, _ = self._make_server(b'[{"ok": true}]')
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id is None
+            assert chunks == 1
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_json_null_response(self) -> None:
+        """JSON null response returns success with no event_id."""
+        server, url, _ = self._make_server(b"null")
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id is None
+            assert chunks == 1
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_numeric_event_id_coerced_to_string(self) -> None:
+        """Numeric event_id in response is coerced to string."""
+        server, url, _ = self._make_server(
+            json.dumps({"ok": True, "event_id": 42}).encode()
+        )
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id == "42"
+            assert chunks == 1
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_empty_event_id_returns_none(self) -> None:
+        """Empty string event_id in response is normalized to None."""
+        server, url, _ = self._make_server(
+            json.dumps({"ok": True, "event_id": ""}).encode()
+        )
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is True
+            assert event_id is None
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_http_500_returns_failure(self) -> None:
+        """HTTP 500 from handler returns failure."""
+        server, url, _ = self._make_server(
+            b'{"error": "internal"}', status=500,
+        )
+        try:
+            app = self._make_app(url)
+            sent, event_id, chunks = await app._send_channel_message(
+                channel_id="!room:matrix.org", text="hello",
+            )
+            assert sent is False
+            assert event_id is None
+            assert chunks == 0
+        finally:
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_handler_empty_send_url(self) -> None:
+        """Handler with send_url="" returns failure (distinct from missing key)."""
+        from open_strix.discord import DiscordMixin
+
+        class FakeApp(DiscordMixin):
+            def __init__(self):
+                self.config = AppConfig(
+                    channel_handlers={"matrix": {"send_url": "", "body_map": "{}"}}
+                )
+                self.current_channel_type = "matrix"
+                self.discord_client = None
+                self.events = []
+
+            def log_event(self, event_type, **payload):
+                self.events.append({"type": event_type, **payload})
+
+            def is_local_web_channel(self, channel_id):
+                return False
+
+        app = FakeApp()
+        sent, _, _ = await app._send_channel_message(
+            channel_id="!room:matrix.org", text="hello",
+        )
+        assert sent is False
+
+
+class TestRoutingEdgeCases:
+    """Verify routing logic edge cases in _send_channel_message."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_discord_overrides_current_matrix(self) -> None:
+        """Explicit channel_type='discord' routes to Discord even when
+        current_channel_type='matrix' has a registered handler."""
+        from open_strix.discord import DiscordMixin
+
+        class FakeApp(DiscordMixin):
+            def __init__(self):
+                self.config = AppConfig(
+                    channel_handlers={
+                        "matrix": {"send_url": "http://127.0.0.1:1/send"}
+                    }
+                )
+                self.current_channel_type = "matrix"
+                self.discord_client = None
+                self.events = []
+                self.discord_called = False
+
+            def log_event(self, event_type, **payload):
+                self.events.append({"type": event_type, **payload})
+
+            def is_local_web_channel(self, channel_id):
+                return False
+
+            async def _send_discord_message(self, **kwargs):
+                self.discord_called = True
+                return True, "123", 1
+
+        app = FakeApp()
+        sent, _, _ = await app._send_channel_message(
+            channel_id="123456789", text="hi",
+            channel_type="discord",  # explicit override to built-in
+        )
+        assert sent is True
+        assert app.discord_called
+
+    @pytest.mark.asyncio
+    async def test_unregistered_channel_type_falls_through(self) -> None:
+        """Explicit channel_type='slack' with no handler falls through to Discord."""
+        from open_strix.discord import DiscordMixin
+
+        class FakeApp(DiscordMixin):
+            def __init__(self):
+                self.config = AppConfig(channel_handlers={})
+                self.current_channel_type = None
+                self.discord_client = None
+                self.events = []
+                self.discord_called = False
+
+            def log_event(self, event_type, **payload):
+                self.events.append({"type": event_type, **payload})
+
+            def is_local_web_channel(self, channel_id):
+                return False
+
+            async def _send_discord_message(self, **kwargs):
+                self.discord_called = True
+                return True, "123", 1
+
+        app = FakeApp()
+        sent, _, _ = await app._send_channel_message(
+            channel_id="123456789", text="hi",
+            channel_type="slack",
+        )
+        assert sent is True
+        assert app.discord_called
+
+    @pytest.mark.asyncio
+    async def test_web_channel_misdirected_when_channel_type_set(self) -> None:
+        """BUG: When current_channel_type='matrix' (registered handler) and
+        channel_id is a web UI channel, the handler check fires first and
+        routes to the HTTP handler instead of the web UI.
+
+        This test documents the bug. It will FAIL until the routing logic is
+        fixed to check web UI channels before config-driven handlers."""
+        from open_strix.discord import DiscordMixin
+        from open_strix.web_ui import WebChatMixin
+
+        class FakeApp(DiscordMixin, WebChatMixin):
+            def __init__(self):
+                self.config = AppConfig(
+                    web_ui_channel_id="local-web",
+                    channel_handlers={
+                        "matrix": {"send_url": "http://127.0.0.1:1/send"}
+                    },
+                )
+                self.current_channel_type = "matrix"
+                self.discord_client = None
+                self.events = []
+                self.web_send_called = False
+
+            def log_event(self, event_type, **payload):
+                self.events.append({"type": event_type, **payload})
+
+            async def _send_web_message(self, **kwargs):
+                self.web_send_called = True
+                return True, "web-123", 1
+
+        app = FakeApp()
+        sent, _, _ = await app._send_channel_message(
+            channel_id="local-web", text="reply to web user",
+        )
+        # The reply should go to the web UI, not the matrix bridge
+        assert app.web_send_called, (
+            "Web UI message was routed to matrix handler instead of web UI"
+        )

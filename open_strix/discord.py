@@ -195,7 +195,17 @@ class DiscordMixin:
         attachment_paths: list[Path] | None = None,
         attachment_names: list[str] | None = None,
     ) -> tuple[bool, str | None, int]:
-        # Check config-driven channel handlers first.
+        # Built-in web UI handler takes priority — a message addressed to the
+        # web UI channel should never be redirected to an external bridge,
+        # even if current_channel_type points to a registered handler.
+        if self.is_local_web_channel(channel_id):
+            return await self._send_web_message(
+                channel_id=channel_id,
+                text=text,
+                attachment_names=attachment_names,
+            )
+
+        # Check config-driven channel handlers.
         effective_type = channel_type or self.current_channel_type
         if effective_type and hasattr(self, "config"):
             handler_config = self.config.channel_handlers.get(effective_type)
@@ -213,13 +223,7 @@ class DiscordMixin:
                     text=text,
                 )
 
-        # Built-in handlers: web UI and Discord.
-        if self.is_local_web_channel(channel_id):
-            return await self._send_web_message(
-                channel_id=channel_id,
-                text=text,
-                attachment_names=attachment_names,
-            )
+        # Fallback: Discord.
         return await self._send_discord_message(
             channel_id=channel_id,
             text=text,
