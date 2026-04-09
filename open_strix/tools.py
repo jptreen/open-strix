@@ -351,9 +351,12 @@ class ToolsMixin:
         async def send_message(
             text: str,
             channel_id: str | None = None,
+            channel_type: str | None = None,
             attachment_paths: list[str] | None = None,
         ) -> str:
-            """Send a message to the current conversation or a specific channel with optional file attachments."""
+            """Send a message to the current conversation or a specific channel with optional file attachments.
+            Omit channel_id and channel_type to reply to the source of the current event.
+            Specify both to send to a different channel (e.g. cross-post to Discord while replying to Matrix)."""
             resolved_attachment_paths, attachment_names = self._resolve_send_message_attachments(
                 attachment_paths,
             )
@@ -428,6 +431,7 @@ class ToolsMixin:
             sent, sent_message_id, sent_chunks = await self._send_channel_message(
                 channel_id=target_channel_id,
                 text=text,
+                channel_type=channel_type,
                 attachment_paths=resolved_attachment_paths,
                 attachment_names=attachment_names,
             )

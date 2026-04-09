@@ -344,6 +344,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.scheduler = AsyncIOScheduler(timezone=UTC)
         self.pending_scheduler_keys: set[str] = set()
         self.current_channel_id: str | None = None
+        self.current_channel_type: str | None = None
         self.current_event_label: str | None = None
         self.current_turn_start: float | None = None
         self.session_id = f"{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
@@ -749,6 +750,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 self.log_event("drain_skip_event", event_type=event.event_type)
                 break
             self.current_channel_id = event.channel_id
+            self.current_channel_type = event.channel_type
             self.current_event_label = event.scheduler_name or event.event_type
             self.current_turn_start = time.monotonic()
             try:
@@ -790,6 +792,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     self.log_event("drain_complete", last_event=event.event_type)
                     break
                 self.current_channel_id = None
+                self.current_channel_type = None
                 self.current_event_label = None
                 self.current_turn_start = None
                 self.queue.task_done()

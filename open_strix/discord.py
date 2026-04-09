@@ -191,9 +191,22 @@ class DiscordMixin:
         *,
         channel_id: str,
         text: str,
+        channel_type: str | None = None,
         attachment_paths: list[Path] | None = None,
         attachment_names: list[str] | None = None,
     ) -> tuple[bool, str | None, int]:
+        # Check config-driven channel handlers first.
+        effective_type = channel_type or self.current_channel_type
+        if effective_type and hasattr(self, "config"):
+            handler_config = self.config.channel_handlers.get(effective_type)
+            if handler_config:
+                return await self._send_via_http_handler(
+                    handler_config=handler_config,
+                    channel_id=channel_id,
+                    text=text,
+                )
+
+        # Built-in handlers: web UI and Discord.
         if self.is_local_web_channel(channel_id):
             return await self._send_web_message(
                 channel_id=channel_id,
@@ -206,6 +219,58 @@ class DiscordMixin:
             attachment_paths=attachment_paths,
             attachment_names=attachment_names,
         )
+
+    async def _send_via_http_handler(
+        self,
+        *,
+        handler_config: dict[str, str],
+        channel_id: str,
+        text: str,
+    ) -> tuple[bool, str | None, int]:
+        """Send a message via a config-driven HTTP POST handler."""
+        import urllib.error
+        import urllib.request
+
+        send_url = handler_config.get("send_url", "")
+        if not send_url:
+            self.log_event(
+                "channel_handler_error",
+                error="no send_url configured",
+                channel_id=channel_id,
+            )
+            return False, None, 0
+
+        body_template = handler_config.get("body_map", "")
+        if body_template:
+            body_str = body_template.replace("{channel_id}", channel_id).replace("{text}", text)
+        else:
+            body_str = json.dumps({"channel_id": channel_id, "text": text})
+
+        try:
+            req = urllib.request.Request(
+                send_url,
+                data=body_str.encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp_body = json.loads(resp.read())
+                event_id = str(resp_body.get("event_id", ""))
+                self.log_event(
+                    "channel_handler_sent",
+                    channel_id=channel_id,
+                    send_url=send_url,
+                    event_id=event_id,
+                )
+                return True, event_id or None, 1
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            self.log_event(
+                "channel_handler_error",
+                channel_id=channel_id,
+                send_url=send_url,
+                error=str(exc),
+            )
+            return False, None, 0
 
     async def _send_discord_message(
         self,

@@ -204,6 +204,7 @@ class AppConfig:
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     disable_builtin_skills: set[str] = field(default_factory=set)
     subagents: list[SubAgentConfig] = field(default_factory=list)
+    channel_handlers: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -271,6 +272,30 @@ def _parse_subagent_configs(raw: Any) -> list[SubAgentConfig]:
     return configs
 
 
+def _parse_channel_handlers(raw: Any) -> dict[str, dict[str, str]]:
+    """Parse channel_handlers from config.yaml.
+
+    Expected format:
+        channel_handlers:
+          matrix:
+            send_url: "http://127.0.0.1:29317/send"
+            body_map: '{"room_id": "{channel_id}", "body": "{text}"}'
+    """
+    if not isinstance(raw, dict):
+        return {}
+    handlers: dict[str, dict[str, str]] = {}
+    for channel_type, handler_config in raw.items():
+        channel_type_str = str(channel_type).strip()
+        if not channel_type_str or not isinstance(handler_config, dict):
+            continue
+        handlers[channel_type_str] = {
+            str(k).strip(): str(v).strip()
+            for k, v in handler_config.items()
+            if str(k).strip()
+        }
+    return handlers
+
+
 def load_config(layout: RepoLayout) -> AppConfig:
     loaded = yaml.safe_load(layout.config_file.read_text(encoding="utf-8")) or {}
     model_raw = loaded.get("model", DEFAULT_MODEL)
@@ -295,6 +320,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         mcp_servers=parse_mcp_server_configs(loaded.get("mcp_servers")),
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
         subagents=_parse_subagent_configs(loaded.get("subagents")),
+        channel_handlers=_parse_channel_handlers(loaded.get("channel_handlers")),
     )
 
 
