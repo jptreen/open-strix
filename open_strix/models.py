@@ -18,3 +18,4 @@ class AgentEvent:
     dedupe_key: str | None = None
     source_id: str | None = None
     source_platform: str | None = None
+    channel_type: str | None = None

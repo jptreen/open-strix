@@ -344,10 +344,20 @@ class SchedulerMixin:
             if source_platform is not None:
                 source_platform = str(source_platform).strip() or None
 
+            channel_id = parsed.get("channel_id")
+            if channel_id is not None:
+                channel_id = str(channel_id).strip() or None
+
+            channel_type = parsed.get("channel_type")
+            if channel_type is not None:
+                channel_type = str(channel_type).strip() or None
+
             await self.enqueue_event(
                 AgentEvent(
                     event_type="poller",
                     prompt=prompt,
+                    channel_id=channel_id,
+                    channel_type=channel_type,
                     scheduler_name=poller.name,
                     dedupe_key=f"poller:{poller.name}:{event_count}",
                     source_platform=source_platform,

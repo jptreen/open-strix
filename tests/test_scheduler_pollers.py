@@ -385,3 +385,107 @@ class TestOnPollerFire:
 
         assert len(app.enqueued) == 1
         assert app.enqueued[0].source_platform is None
+
+    @pytest.mark.asyncio
+    async def test_poller_channel_id_and_type_passthrough(self, tmp_home: Path) -> None:
+        """channel_id and channel_type from poller JSONL flow through to AgentEvent."""
+        skill_dir = tmp_home / "skills" / "matrix"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "matrix", "prompt": "hello", '
+            '"channel_id": "!room:matrix.org", "channel_type": "matrix"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="matrix-poller",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].channel_id == "!room:matrix.org"
+        assert app.enqueued[0].channel_type == "matrix"
+        assert app.enqueued[0].prompt == "hello"
+
+    @pytest.mark.asyncio
+    async def test_poller_no_channel_fields_defaults_none(self, tmp_home: Path) -> None:
+        """Missing channel_id/channel_type in JSONL results in None on AgentEvent."""
+        skill_dir = tmp_home / "skills" / "bare"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "test", "prompt": "no channel info"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="bare-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].channel_id is None
+        assert app.enqueued[0].channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_poller_channel_id_without_type(self, tmp_home: Path) -> None:
+        """channel_id and channel_type are extracted independently."""
+        skill_dir = tmp_home / "skills" / "partial"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "test", "prompt": "hi", '
+            '"channel_id": "12345"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="partial-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].channel_id == "12345"
+        assert app.enqueued[0].channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_poller_whitespace_channel_fields_coerced_to_none(self, tmp_home: Path) -> None:
+        """Whitespace-only channel_id/channel_type are coerced to None."""
+        skill_dir = tmp_home / "skills" / "ws"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "test", "prompt": "hi", '
+            '"channel_id": "  ", "channel_type": " "}))\n'
+        )
+
+        poller = PollerConfig(
+            name="ws-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].channel_id is None
+        assert app.enqueued[0].channel_type is None
