@@ -253,9 +253,14 @@ class DiscordMixin:
             # Escape values for safe JSON interpolation: json.dumps produces
             # a quoted string like '"hello \"world\""', so we strip the outer
             # quotes to get the escaped interior for template substitution.
-            safe_channel_id = json.dumps(channel_id)[1:-1]
-            safe_text = json.dumps(text)[1:-1]
-            body_str = body_template.replace("{channel_id}", safe_channel_id).replace("{text}", safe_text)
+            # Single-pass substitution prevents cross-placeholder pollution
+            # (e.g. channel_id containing "{text}" leaking message content).
+            subs = {
+                "{channel_id}": json.dumps(channel_id)[1:-1],
+                "{text}": json.dumps(text)[1:-1],
+            }
+            _ph_re = re.compile("|".join(re.escape(k) for k in subs))
+            body_str = _ph_re.sub(lambda m: subs[m.group(0)], body_template)
         else:
             body_str = json.dumps({"channel_id": channel_id, "text": text})
 
