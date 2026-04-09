@@ -272,6 +272,9 @@ def _parse_subagent_configs(raw: Any) -> list[SubAgentConfig]:
     return configs
 
 
+_RESERVED_CHANNEL_TYPES = frozenset({"discord", "web", "local-web", "stdin"})
+
+
 def _parse_channel_handlers(raw: Any) -> dict[str, dict[str, str]]:
     """Parse channel_handlers from config.yaml.
 
@@ -280,6 +283,9 @@ def _parse_channel_handlers(raw: Any) -> dict[str, dict[str, str]]:
           matrix:
             send_url: "http://127.0.0.1:29317/send"
             body_map: '{"room_id": "{channel_id}", "body": "{text}"}'
+
+    Reserved channel types (discord, web, local-web, stdin) are silently
+    skipped to prevent shadowing built-in routing.
     """
     if not isinstance(raw, dict):
         return {}
@@ -287,6 +293,8 @@ def _parse_channel_handlers(raw: Any) -> dict[str, dict[str, str]]:
     for channel_type, handler_config in raw.items():
         channel_type_str = str(channel_type).strip()
         if not channel_type_str or not isinstance(handler_config, dict):
+            continue
+        if channel_type_str in _RESERVED_CHANNEL_TYPES:
             continue
         handlers[channel_type_str] = {
             str(k).strip(): str(v).strip()

@@ -200,6 +200,13 @@ class DiscordMixin:
         if effective_type and hasattr(self, "config"):
             handler_config = self.config.channel_handlers.get(effective_type)
             if handler_config:
+                if attachment_paths:
+                    self.log_event(
+                        "channel_handler_attachments_unsupported",
+                        channel_type=effective_type,
+                        channel_id=channel_id,
+                        attachment_count=len(attachment_paths),
+                    )
                 return await self._send_via_http_handler(
                     handler_config=handler_config,
                     channel_id=channel_id,
@@ -228,6 +235,7 @@ class DiscordMixin:
         text: str,
     ) -> tuple[bool, str | None, int]:
         """Send a message via a config-driven HTTP POST handler."""
+        import asyncio
         import urllib.error
         import urllib.request
 
@@ -242,11 +250,16 @@ class DiscordMixin:
 
         body_template = handler_config.get("body_map", "")
         if body_template:
-            body_str = body_template.replace("{channel_id}", channel_id).replace("{text}", text)
+            # Escape values for safe JSON interpolation: json.dumps produces
+            # a quoted string like '"hello \"world\""', so we strip the outer
+            # quotes to get the escaped interior for template substitution.
+            safe_channel_id = json.dumps(channel_id)[1:-1]
+            safe_text = json.dumps(text)[1:-1]
+            body_str = body_template.replace("{channel_id}", safe_channel_id).replace("{text}", safe_text)
         else:
             body_str = json.dumps({"channel_id": channel_id, "text": text})
 
-        try:
+        def _sync_post() -> tuple[bool, str | None, int]:
             req = urllib.request.Request(
                 send_url,
                 data=body_str.encode("utf-8"),
@@ -254,16 +267,24 @@ class DiscordMixin:
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
-                resp_body = json.loads(resp.read())
-                event_id = str(resp_body.get("event_id", ""))
-                self.log_event(
-                    "channel_handler_sent",
-                    channel_id=channel_id,
-                    send_url=send_url,
-                    event_id=event_id,
-                )
+                raw = resp.read()
+                try:
+                    resp_body = json.loads(raw)
+                    event_id = str(resp_body.get("event_id", "")) if isinstance(resp_body, dict) else ""
+                except (json.JSONDecodeError, AttributeError):
+                    event_id = ""
                 return True, event_id or None, 1
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+
+        try:
+            result = await asyncio.to_thread(_sync_post)
+            self.log_event(
+                "channel_handler_sent",
+                channel_id=channel_id,
+                send_url=send_url,
+                event_id=result[1],
+            )
+            return result
+        except (urllib.error.URLError, TimeoutError, OSError, Exception) as exc:
             self.log_event(
                 "channel_handler_error",
                 channel_id=channel_id,
