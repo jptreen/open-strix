@@ -205,6 +205,7 @@ class AppConfig:
     disable_builtin_skills: set[str] = field(default_factory=set)
     subagents: list[SubAgentConfig] = field(default_factory=list)
     channel_handlers: dict[str, dict[str, str]] = field(default_factory=dict)
+    auto_send_final_text: bool = True
 
     @property
     def writable_dirs(self) -> list[str]:
@@ -329,6 +330,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         disable_builtin_skills=_normalize_id_list(loaded.get("disable_builtin_skills")),
         subagents=_parse_subagent_configs(loaded.get("subagents")),
         channel_handlers=_parse_channel_handlers(loaded.get("channel_handlers")),
+        auto_send_final_text=bool(loaded.get("auto_send_final_text", True)),
     )
 
 

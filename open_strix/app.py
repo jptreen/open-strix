@@ -369,6 +369,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self._send_message_similarity_streak = 0
         self._send_message_circuit_breaker_active = False
         self._send_message_warning_reaction_sent = False
+        self._withhold_final_text = False
 
         self.phone_book = load_phone_book(self.layout.phone_book_file)
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
@@ -825,6 +826,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
+        self._withhold_final_text = False
         prompt = self._render_prompt(event)
         self.log_event(
             "agent_invoke_start",
@@ -839,12 +841,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             self._write_session_log(event, prompt, result)
 
             final_text = self._extract_final_text(result)
-            self.log_event(
-                "agent_final_message_discarded",
-                source_event_type=event.event_type,
-                channel_id=event.channel_id,
-                final_text=final_text,
-            )
+            await self._auto_send_final_text(event, final_text)
 
             # Post-turn hook: validate memory blocks and let agent self-correct
             block_errors = self._validate_memory_blocks()
@@ -963,6 +960,60 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         text_parts.append(str(part.get("text", "")))
                 return "\n".join(text_parts).strip()
         return ""
+
+    async def _auto_send_final_text(self, event: AgentEvent, final_text: str) -> None:
+        """Auto-send final_text to the source channel unless withheld or suppressed."""
+        if not final_text:
+            self.log_event("agent_final_text_empty", channel_id=event.channel_id)
+            return
+        if not self.config.auto_send_final_text:
+            self.log_event(
+                "agent_final_text_discarded",
+                reason="disabled_by_config",
+                channel_id=event.channel_id,
+                final_text=final_text,
+            )
+            return
+        if self._withhold_final_text:
+            self.log_event(
+                "agent_final_text_withheld",
+                channel_id=event.channel_id,
+                final_text=final_text,
+            )
+            return
+        if not event.channel_id:
+            self.log_event(
+                "agent_final_text_discarded",
+                reason="no_channel_id",
+                final_text=final_text,
+            )
+            return
+        if self._send_message_circuit_breaker_active:
+            self.log_event(
+                "agent_final_text_discarded",
+                reason="circuit_breaker_active",
+                channel_id=event.channel_id,
+                final_text=final_text,
+            )
+            return
+        try:
+            await self._send_channel_message(
+                channel_id=event.channel_id,
+                text=final_text,
+                channel_type=event.channel_type,
+            )
+            self.log_event(
+                "agent_final_text_auto_sent",
+                channel_id=event.channel_id,
+                final_text=final_text,
+            )
+        except Exception as exc:
+            self.log_event(
+                "agent_final_text_send_failed",
+                channel_id=event.channel_id,
+                error=str(exc),
+                final_text=final_text,
+            )
 
     async def _stdin_mode(self) -> None:
         self.log_event("stdin_mode_start")

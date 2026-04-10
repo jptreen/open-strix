@@ -1429,6 +1429,15 @@ class ToolsMixin:
             self.log_event("tool_call", tool="climb_status")
             return block
 
+        @tool("withhold_response")
+        async def withhold_response(reason: str = "") -> str:
+            """Suppress auto-sending your final text response for this turn.
+            Call this when doing internal processing, background work, or when
+            you have already sent what is needed via send_message."""
+            self._withhold_final_text = True
+            self.log_event("withhold_response", reason=reason)
+            return "Response withheld — final text will not be auto-sent this turn."
+
         send_message.handle_tool_error = True
         list_messages.handle_tool_error = True
         run_shell_tool.handle_tool_error = True
@@ -1436,6 +1445,7 @@ class ToolsMixin:
 
         tools: list[Any] = [
             send_message,
+            withhold_response,
             react,
             list_messages,
             lookup,
