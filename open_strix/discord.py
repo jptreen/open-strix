@@ -217,11 +217,26 @@ class DiscordMixin:
                         channel_id=channel_id,
                         attachment_count=len(attachment_paths),
                     )
-                return await self._send_via_http_handler(
+                result = await self._send_via_http_handler(
                     handler_config=handler_config,
                     channel_id=channel_id,
                     text=text,
                 )
+                if result[0]:  # success
+                    self._remember_message(
+                        channel_id=channel_id,
+                        author="open_strix",
+                        content=text,
+                        attachment_names=list(attachment_names or []),
+                        message_id=result[1],
+                        is_bot=True,
+                        source=effective_type,
+                    )
+                    if self._current_turn_sent_messages is not None:
+                        self._current_turn_sent_messages.append(
+                            (channel_id, result[1]),
+                        )
+                return result
 
         # Fallback: Discord.
         return await self._send_discord_message(

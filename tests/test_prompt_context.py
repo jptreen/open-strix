@@ -58,7 +58,7 @@ def test_prompt_includes_last_n_discord_messages_only(
 
     messages_section = _extract_section(
         prompt,
-        "3) Last Discord messages:\n",
+        "3) Recent messages:\n",
         "4) Discord channel context:",
     )
     channel_context_section = _extract_section(
@@ -132,7 +132,7 @@ def test_journal_rendering_format_and_channel_id_autofill(
     memory_section = _extract_section(
         prompt,
         "2) Memory blocks:\n",
-        "3) Last Discord messages:",
+        "3) Recent messages:",
     )
     channel_context_section = _extract_section(
         prompt,

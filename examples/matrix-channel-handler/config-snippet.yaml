@@ -1,0 +1,7 @@
+# Add this block to your config.yaml to register the Matrix channel handler.
+# The send_url should point to your Matrix bridge's /send endpoint.
+
+channel_handlers:
+  matrix:
+    send_url: "http://127.0.0.1:29317/send"
+    body_map: '{"room_id": "{channel_id}", "body": "{text}"}'

@@ -698,10 +698,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             self.config.journal_entries_in_prompt,
         )
         blocks = self._load_blocks_for_prompt()
+        allowed_sources = {"discord", "web", "stdin"}
+        if hasattr(self, "config") and self.config.channel_handlers:
+            allowed_sources.update(self.config.channel_handlers.keys())
         recent_candidates = [
             item
             for item in self.message_history_all
-            if item.get("source") in {"discord", "web", "stdin"}
+            if item.get("source") in allowed_sources
         ]
         if event.channel_id:
             channel_recent = [
@@ -711,6 +714,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             ]
             if channel_recent:
                 recent_candidates = channel_recent
+        # Exclude the current event from section 3 to avoid duplication
+        # with section 5 (which always renders the current event).
+        if event.source_id:
+            recent_candidates = [
+                item for item in recent_candidates
+                if item.get("message_id") != event.source_id
+            ]
         recent_messages = recent_candidates[-self.config.discord_messages_in_prompt :]
 
         return render_turn_prompt(
@@ -827,6 +837,22 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
         self._withhold_final_text = False
+
+        # Store conversational poller messages in history so they appear
+        # in prompt context.  Discriminator: channel_type is set for
+        # conversational pollers (e.g. Matrix); notification-only pollers
+        # use source_platform instead and are NOT stored.
+        if event.event_type == "poller" and event.channel_type and event.channel_id:
+            self._remember_message(
+                channel_id=event.channel_id,
+                author=event.author or event.scheduler_name or "unknown",
+                content=event.prompt,
+                attachment_names=list(event.attachment_names),
+                message_id=event.source_id,
+                is_bot=False,
+                source=event.channel_type,
+            )
+
         prompt = self._render_prompt(event)
         self.log_event(
             "agent_invoke_start",

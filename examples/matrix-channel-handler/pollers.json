@@ -1,0 +1,9 @@
+{
+  "pollers": [
+    {
+      "name": "matrix",
+      "command": "python poller.py",
+      "cron": "* * * * *"
+    }
+  ]
+}

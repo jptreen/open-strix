@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import defaultdict, deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from threading import Thread
@@ -14,6 +15,13 @@ import pytest
 
 from open_strix.config import AppConfig, _parse_channel_handlers
 from open_strix.models import AgentEvent
+
+
+class _MessageHistoryStub:
+    """Mixin providing message_history stubs for FakeApp test classes."""
+
+    def _append_chat_history_record(self, record: dict) -> None:
+        pass  # no-op in tests — skip disk persistence
 
 
 class TestParseChannelHandlers:
@@ -96,7 +104,7 @@ class TestSendViaHttpHandler:
         # Minimal stub that satisfies _send_channel_message's protocol.
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 body_map = '{"room_id": "{channel_id}", "body": "{text}"}'
                 self.config = AppConfig(
@@ -110,6 +118,9 @@ class TestSendViaHttpHandler:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -137,7 +148,7 @@ class TestSendViaHttpHandler:
 
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 body_map = '{"room_id": "{channel_id}", "body": "{text}"}'
                 self.config = AppConfig(
@@ -151,6 +162,9 @@ class TestSendViaHttpHandler:
                 self.current_channel_type = "discord"  # current is discord
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -173,12 +187,15 @@ class TestSendViaHttpHandler:
         """Unregistered channel_type falls through to Discord path."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(channel_handlers={})
                 self.current_channel_type = None
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
                 self.discord_send_called = False
 
             def log_event(self, event_type, **payload):
@@ -205,7 +222,7 @@ class TestSendViaHttpHandler:
         """HTTP handler that can't connect returns failure, doesn't crash."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={
@@ -215,6 +232,9 @@ class TestSendViaHttpHandler:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -238,7 +258,7 @@ class TestSendViaHttpHandler:
         """Handler config without send_url returns failure."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={"matrix": {"body_map": "{}"}}
@@ -246,6 +266,9 @@ class TestSendViaHttpHandler:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -325,7 +348,7 @@ class TestJsonEscaping:
 
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={"matrix": {"send_url": f"{url}/send"}}
@@ -333,6 +356,9 @@ class TestJsonEscaping:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -353,7 +379,7 @@ class TestJsonEscaping:
 
         body_map = '{"room_id": "{channel_id}", "body": "{text}"}'
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={
@@ -363,6 +389,9 @@ class TestJsonEscaping:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -384,7 +413,7 @@ class TestAttachmentWarning:
 
         body_map = '{"room_id": "{channel_id}", "body": "{text}"}'
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={
@@ -394,6 +423,9 @@ class TestAttachmentWarning:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -455,7 +487,7 @@ class TestNonBlockingIO:
 
         body_map = '{"room_id": "{channel_id}", "body": "{text}"}'
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={
@@ -465,6 +497,9 @@ class TestNonBlockingIO:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -709,7 +744,7 @@ class TestHttpResponseEdgeCases:
     def _make_app(url):
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={"matrix": {"send_url": f"{url}/send"}}
@@ -717,6 +752,9 @@ class TestHttpResponseEdgeCases:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -844,7 +882,7 @@ class TestHttpResponseEdgeCases:
         """Handler with send_url="" returns failure (distinct from missing key)."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={"matrix": {"send_url": "", "body_map": "{}"}}
@@ -852,6 +890,9 @@ class TestHttpResponseEdgeCases:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
 
             def log_event(self, event_type, **payload):
                 self.events.append({"type": event_type, **payload})
@@ -875,7 +916,7 @@ class TestRoutingEdgeCases:
         current_channel_type='matrix' has a registered handler."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(
                     channel_handlers={
@@ -885,6 +926,9 @@ class TestRoutingEdgeCases:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
                 self.discord_called = False
 
             def log_event(self, event_type, **payload):
@@ -910,12 +954,15 @@ class TestRoutingEdgeCases:
         """Explicit channel_type='slack' with no handler falls through to Discord."""
         from open_strix.discord import DiscordMixin
 
-        class FakeApp(DiscordMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin):
             def __init__(self):
                 self.config = AppConfig(channel_handlers={})
                 self.current_channel_type = None
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
                 self.discord_called = False
 
             def log_event(self, event_type, **payload):
@@ -947,7 +994,7 @@ class TestRoutingEdgeCases:
         from open_strix.discord import DiscordMixin
         from open_strix.web_ui import WebChatMixin
 
-        class FakeApp(DiscordMixin, WebChatMixin):
+        class FakeApp(_MessageHistoryStub, DiscordMixin, WebChatMixin):
             def __init__(self):
                 self.config = AppConfig(
                     web_ui_channel_id="local-web",
@@ -958,6 +1005,9 @@ class TestRoutingEdgeCases:
                 self.current_channel_type = "matrix"
                 self.discord_client = None
                 self.events = []
+                self.message_history_all = deque(maxlen=500)
+                self.message_history_by_channel = defaultdict(lambda: deque(maxlen=250))
+                self._current_turn_sent_messages = []
                 self.web_send_called = False
 
             def log_event(self, event_type, **payload):

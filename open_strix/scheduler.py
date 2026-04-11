@@ -352,6 +352,16 @@ class SchedulerMixin:
             if channel_type is not None:
                 channel_type = str(channel_type).strip() or None
 
+            # Extract author (sender) and source_id (event_id) so
+            # conversational pollers can populate message_history.
+            author = parsed.get("sender") or parsed.get("author")
+            if author is not None:
+                author = str(author).strip() or None
+
+            source_id = parsed.get("event_id") or parsed.get("source_id")
+            if source_id is not None:
+                source_id = str(source_id).strip() or None
+
             await self.enqueue_event(
                 AgentEvent(
                     event_type="poller",
@@ -361,6 +371,8 @@ class SchedulerMixin:
                     scheduler_name=poller.name,
                     dedupe_key=f"poller:{poller.name}:{event_count}",
                     source_platform=source_platform,
+                    author=author,
+                    source_id=source_id,
                 ),
             )
             event_count += 1
