@@ -11,6 +11,7 @@ from open_strix.phone_book import (
     PhoneBook,
     PhoneBookEntry,
     enrich_from_jsonl,
+    export_to_jsonl,
     load_phone_book,
     populate_from_guilds,
     render_aliases_block,
@@ -659,3 +660,87 @@ def test_render_turn_prompt_omits_aliases_when_empty() -> None:
         current_event={"event_type": "message", "prompt": "hello"},
     )
     assert "Known people and channels" not in result
+
+
+# ------------------------------------------------------------------
+# export_to_jsonl — phone book → starter JSONL migration
+# ------------------------------------------------------------------
+
+
+def test_export_to_jsonl_creates_files(tmp_path: Path) -> None:
+    """export_to_jsonl generates people.jsonl and channels.jsonl from phone book."""
+    book = PhoneBook()
+    book.add(PhoneBookEntry(id="111", name="Alice", kind="user"))
+    book.add(PhoneBookEntry(id="222", name="Bob", kind="user", is_bot=True))
+    book.add(PhoneBookEntry(id="333", name="general", kind="channel"))
+
+    people_path = tmp_path / "people.jsonl"
+    channels_path = tmp_path / "channels.jsonl"
+
+    p_count, c_count = export_to_jsonl(book, people_path, channels_path)
+    assert p_count == 2
+    assert c_count == 1
+    assert people_path.exists()
+    assert channels_path.exists()
+
+    import json
+    people = [json.loads(line) for line in people_path.read_text().strip().splitlines()]
+    assert len(people) == 2
+    alice = next(p for p in people if p["name"] == "Alice")
+    assert alice["type"] == "human"
+    assert alice["discord_id"] == "111"
+    assert alice["bluesky"] == ""  # placeholder
+
+    bob = next(p for p in people if p["name"] == "Bob")
+    assert bob["type"] == "bot"
+
+    channels = [json.loads(line) for line in channels_path.read_text().strip().splitlines()]
+    assert len(channels) == 1
+    assert channels[0]["name"] == "general"
+
+
+def test_export_to_jsonl_skips_existing(tmp_path: Path) -> None:
+    """export_to_jsonl never overwrites existing JSONL files."""
+    book = PhoneBook()
+    book.add(PhoneBookEntry(id="111", name="Alice", kind="user"))
+
+    people_path = tmp_path / "people.jsonl"
+    channels_path = tmp_path / "channels.jsonl"
+    people_path.write_text('{"name":"Existing"}\n')
+
+    p_count, c_count = export_to_jsonl(book, people_path, channels_path)
+    assert p_count == 0  # skipped because file exists
+    assert c_count == 0  # no channels in book
+    assert people_path.read_text() == '{"name":"Existing"}\n'  # unchanged
+
+
+def test_export_then_enrich_roundtrip(tmp_path: Path) -> None:
+    """Exported JSONL can be loaded back via enrich_from_jsonl."""
+    book = PhoneBook()
+    book.add(PhoneBookEntry(id="111", name="Alice", kind="user"))
+    book.add(PhoneBookEntry(id="222", name="general", kind="channel"))
+
+    people_path = tmp_path / "people.jsonl"
+    channels_path = tmp_path / "channels.jsonl"
+    export_to_jsonl(book, people_path, channels_path)
+
+    # Create a fresh book and enrich from the exported files
+    fresh_book = PhoneBook()
+    enrich_from_jsonl(fresh_book, people_path, channels_path)
+    assert "111" in fresh_book.entries
+    assert fresh_book.entries["111"].name == "Alice"
+    assert "222" in fresh_book.entries
+    assert fresh_book.entries["222"].name == "general"
+
+
+def test_load_jsonl_warns_on_malformed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Malformed JSON lines produce a warning log."""
+    import logging
+    bad_file = tmp_path / "bad.jsonl"
+    bad_file.write_text('{"good": true}\nnot json\n{"also_good": true}\n')
+
+    from open_strix.phone_book import _load_jsonl
+    with caplog.at_level(logging.WARNING):
+        records = _load_jsonl(bad_file)
+    assert len(records) == 2
+    assert "malformed JSON" in caplog.text.lower() or "Skipping" in caplog.text

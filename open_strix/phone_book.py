@@ -12,10 +12,13 @@ Discord data.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -224,6 +227,65 @@ def save_phone_book(book: PhoneBook, path: Path) -> None:
     path.write_text(book.render_markdown(), encoding="utf-8")
 
 
+def export_to_jsonl(book: PhoneBook, people_path: Path, channels_path: Path) -> tuple[int, int]:
+    """Export the current phone book as starter JSONL files.
+
+    Creates ``people.jsonl`` and ``channels.jsonl`` from the auto-populated
+    phone book so operators have a starting point to add cross-platform
+    aliases (Bluesky handles, emails, etc.).
+
+    Skips writing a file if it already exists (never overwrites).
+    Returns (people_count, channels_count) of records written.
+    """
+    people_count = 0
+    channels_count = 0
+
+    users = [e for e in book.entries.values() if e.kind == "user"]
+    channels = [e for e in book.entries.values() if e.kind == "channel"]
+
+    if people_path.exists():
+        logger.info("Skipping %s — already exists (%d users not exported)",
+                     people_path.name, len(users))
+    else:
+        people_path.parent.mkdir(parents=True, exist_ok=True)
+        with people_path.open("w", encoding="utf-8") as fh:
+            for u in sorted(users, key=lambda e: e.name.lower()):
+                record: dict[str, Any] = {
+                    "name": u.name,
+                    "type": "bot" if u.is_bot else "human",
+                    "discord_id": u.id,
+                    "discord_mention": f"<@{u.id}>",
+                    "discord_display": u.name,
+                    "bluesky": "",
+                    "google_docs_name": "",
+                    "google_docs_email": "",
+                    "notes": "",
+                }
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                people_count += 1
+        logger.info("Exported %d people to %s", people_count, people_path)
+
+    if channels_path.exists():
+        logger.info("Skipping %s — already exists (%d channels not exported)",
+                     channels_path.name, len(channels))
+    else:
+        channels_path.parent.mkdir(parents=True, exist_ok=True)
+        with channels_path.open("w", encoding="utf-8") as fh:
+            for c in sorted(channels, key=lambda e: e.name.lower()):
+                record = {
+                    "name": c.name,
+                    "discord_id": c.id,
+                    "aliases": [],
+                    "who": "",
+                    "notes": c.extra or "",
+                }
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                channels_count += 1
+        logger.info("Exported %d channels to %s", channels_count, channels_path)
+
+    return people_count, channels_count
+
+
 # ------------------------------------------------------------------
 # JSONL enrichment — cross-platform aliases
 # ------------------------------------------------------------------
@@ -235,13 +297,15 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
         return []
     records: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
+        for line_num, line in enumerate(fh, 1):
             line = line.strip()
             if line:
                 try:
                     records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as exc:
+                    logger.warning("Skipping malformed JSON at %s:%d: %s", path, line_num, exc)
+    if records:
+        logger.info("Loaded %d records from %s", len(records), path.name)
     return records
 
 
