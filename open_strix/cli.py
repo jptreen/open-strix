@@ -13,6 +13,7 @@ from typing import Sequence
 
 from .app import run_open_strix
 from .config import RepoLayout, STATE_DIR_NAME, bootstrap_home_repo
+from .phone_book import export_to_jsonl, load_phone_book
 from .prompts import DEFAULT_CHECKPOINT
 
 DEFAULT_ENV = """\
@@ -804,6 +805,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="GitHub repo name override (default: directory name).",
     )
 
+    export_pb_parser = subparsers.add_parser(
+        "export-phone-book",
+        help="Export auto-populated phone book to starter JSONL files for cross-platform alias enrichment.",
+    )
+    export_pb_parser.add_argument(
+        "--home",
+        type=Path,
+        default=Path.cwd(),
+        help="Agent home directory (default: cwd).",
+    )
+
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.command in (None, "run"):
@@ -817,6 +829,26 @@ def main(argv: Sequence[str] | None = None) -> None:
         except RuntimeError as exc:
             print(str(exc), flush=True)
             sys.exit(1)
+        return
+
+    if args.command == "export-phone-book":
+        layout = RepoLayout(home=args.home)
+        book = load_phone_book(layout.phone_book_file)
+        if not book.entries:
+            print(f"No phone book found at {layout.phone_book_file}")
+            print("Run the bot first so it auto-populates from Discord, then try again.")
+            sys.exit(1)
+        people_count, channels_count = export_to_jsonl(book, layout.people_jsonl, layout.channels_jsonl)
+        if people_count or channels_count:
+            print(f"Exported {people_count} people to {layout.people_jsonl}")
+            print(f"Exported {channels_count} channels to {layout.channels_jsonl}")
+            print("\nNext: edit the JSONL files to add cross-platform aliases (Bluesky, email, etc.).")
+            print("Empty fields are placeholders — fill in what you know, delete what you don't.")
+        else:
+            print("JSONL files already exist — not overwriting.")
+            print(f"  {layout.people_jsonl}")
+            print(f"  {layout.channels_jsonl}")
+            print("Delete them first if you want to regenerate from the current phone book.")
         return
 
     parser.print_help()

@@ -42,7 +42,7 @@ from .config import (
     load_config,
 )
 from .mcp_client import MCPManager
-from .phone_book import load_phone_book
+from .phone_book import enrich_from_jsonl, load_phone_book, render_aliases_block
 from .discord import (
     DISCORD_HISTORY_REFRESH_LIMIT,
     DISCORD_MESSAGE_CHAR_LIMIT,
@@ -54,13 +54,14 @@ from .discord import (
 )
 from .models import AgentEvent
 from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_folders_section, render_turn_prompt
-from .readonly_backend import BUILTIN_SKILLS_ROUTE, LoggingWriteGuardBackend, build_builtin_skills_backend
+from .readonly_backend import BUILTIN_SKILLS_ROUTE, LoggingWriteGuardBackend, WriteGuardBackend, build_builtin_skills_backend
 from .scheduler import SchedulerJob, SchedulerMixin
 from .supervisor import Supervisor
 from .tools import (
     SEND_MESSAGE_LOOP_HARD_LIMIT,
     SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD,
     SEND_MESSAGE_LOOP_SOFT_LIMIT,
+    SEND_MESSAGE_LOOP_WARN_LIMIT,
     SendMessageCircuitBreakerStop,
     ToolsMixin,
 )
@@ -363,6 +364,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.worker_task: asyncio.Task[Any] | None = None
         self._current_turn_sent_messages: list[tuple[str, str]] | None = None
         self.send_message_loop_soft_limit = SEND_MESSAGE_LOOP_SOFT_LIMIT
+        self.send_message_loop_warn_limit = SEND_MESSAGE_LOOP_WARN_LIMIT
         self.send_message_loop_hard_limit = SEND_MESSAGE_LOOP_HARD_LIMIT
         self.send_message_loop_similarity_threshold = SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD
         self._send_message_last_text_normalized: str | None = None
@@ -370,8 +372,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self._send_message_circuit_breaker_active = False
         self._send_message_warning_reaction_sent = False
         self._withhold_final_text = False
+        self._last_turn_failure: str | None = None
 
         self.phone_book = load_phone_book(self.layout.phone_book_file)
+        enrich_from_jsonl(
+            self.phone_book, self.layout.people_jsonl, self.layout.channels_jsonl,
+        )
         self.supervisor = Supervisor(self.layout.state_dir / "climbers")
         self._draining = False
         self.mcp_manager: MCPManager | None = None
@@ -740,6 +746,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 "source_id": event.source_id,
                 "source_platform": event.source_platform,
             },
+            last_turn_failure=self._last_turn_failure,
+            aliases_block=render_aliases_block(self.phone_book),
         )
 
     def _load_blocks_for_prompt(self) -> list[dict[str, Any]]:
@@ -766,7 +774,14 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             self.current_turn_start = time.monotonic()
             try:
                 await self._process_event(event)
+                self._last_turn_failure = None
             except SendMessageCircuitBreakerStop as exc:
+                self._last_turn_failure = (
+                    "Your previous turn was terminated by the send_message circuit breaker "
+                    "(repeated near-duplicate messages). Before retrying, reflect on what "
+                    "caused the loop. Consider using the five-whys skill to find the root "
+                    "cause before attempting a different approach."
+                )
                 self.log_event(
                     "warning",
                     where="event_worker",
@@ -777,6 +792,11 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     **_error_log_fields(exc),
                 )
             except Exception as exc:
+                self._last_turn_failure = (
+                    f"Your previous turn ended with an error: {type(exc).__name__}: {exc}. "
+                    "Before retrying, reflect on what went wrong. If this is a recurring "
+                    "failure, consider using the five-whys skill to find the structural cause."
+                )
                 reacted = False
                 if _should_react_to_error(event):
                     reacted = await self._react_to_latest_message(

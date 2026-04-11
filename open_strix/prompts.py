@@ -39,6 +39,7 @@ Communication:
 - In 1-1 DMs, you should *ALWAYS* acknowledge a message, either by reacting or replying.
 - Pay attention to which conversation is happening in which room or local web chat, and use channel IDs correctly.
 - Use the `lookup` tool to find user IDs and channel IDs by name. To mention someone: `<@USER_ID>`. The phone book at `state/phone-book.md` lists all known users and channels. For manual notes about channels, people, and external comms, see `state/phone-book.extra.md`.
+- Cross-platform aliases (Bluesky, email, etc.) can be added to `state/people.jsonl` and `state/channels.jsonl`. These are included in every turn prompt so you always know who is who across platforms.
 
 Memory:
 - Memory blocks define who you are and your operational parameters. They're highly visible to you.
@@ -56,7 +57,8 @@ Skills:
 - **Before writing to memory or files**, read the memory skill for guidance on what goes where.
 - **Periodically** (e.g., during scheduled ticks or quiet moments), review your journal predictions using the prediction-review skill.
 - **When creating new reusable workflows**, use the skill-creator skill.
-- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes.
+- **When something goes wrong or feels off**, use the introspection skill to query your event logs and journal before guessing at causes. If introspection reveals a recurring pattern or structural issue, follow up with the five-whys skill to find the root cause — introspection finds *what* happened, five-whys finds *why*.
+- **When a prediction turns out wrong**, don't just log the miss. Ask *why* your world model produced the wrong prediction. If the miss is surprising or part of a pattern, use the five-whys skill to decompose it.
 - **When your human asks what you did** (or why), use the introspection skill to answer from your actual logs — not from memory, which may be incomplete or wrong.
 - Don't wait for your human to say "use the memory skill." If the moment calls for it, reach for it yourself.
 - **Never edit `.open_strix_builtin_skills/`** — these are read-only system skills managed upstream. For custom skills, use the skill-creator skill. To change system skills, PR the open-strix repo.
@@ -284,12 +286,34 @@ def render_turn_prompt(
     memory_blocks: list[dict[str, Any]],
     recent_messages: list[dict[str, Any]],
     current_event: Mapping[str, Any],
+    last_turn_failure: str | None = None,
+    aliases_block: str = "",
 ) -> str:
     journals = render_journal_entries(journal_entries)
     blocks_text = render_memory_blocks(memory_blocks)
     messages_text = render_chat_messages(recent_messages)
     channel_context_text = render_channel_context(current_event)
     current_event_text = render_current_event(current_event)
+
+    failure_section = ""
+    if last_turn_failure:
+        failure_section = f"""
+        6) Previous turn failure:
+        {last_turn_failure}
+        """
+
+    aliases_section = ""
+    if aliases_block:
+        aliases_section = f"""
+        6) Known people and channels:
+        {aliases_block}
+        """
+        # Renumber failure section if both present
+        if failure_section:
+            failure_section = f"""
+        7) Previous turn failure:
+        {last_turn_failure}
+        """
 
     return textwrap.dedent(
         f"""\
@@ -310,6 +334,6 @@ def render_turn_prompt(
         5) Current message + reply channel:
         {current_event_text}
 
-        Your final response will be sent to the user automatically.
-        """
+Your final response will be sent to the user automatically.
+        {aliases_section}{failure_section}"""
     )

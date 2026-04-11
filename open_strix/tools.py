@@ -26,6 +26,7 @@ FETCH_CHUNK_SIZE_BYTES = 64 * 1024
 DEFAULT_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 SHELL_OUTPUT_LIMIT_CHARS = 12_000
 SEND_MESSAGE_LOOP_SOFT_LIMIT = 3
+SEND_MESSAGE_LOOP_WARN_LIMIT = 7
 SEND_MESSAGE_LOOP_HARD_LIMIT = 10
 SEND_MESSAGE_LOOP_SIMILARITY_THRESHOLD = 0.98
 
@@ -410,8 +411,32 @@ class ToolsMixin:
                         reacted=hard_stop_reacted,
                     )
                     raise SendMessageCircuitBreakerStop(
-                        "send_message hard stop: detected repeated near-duplicate loop. "
-                        "Turn terminated at streak=10 for safety.",
+                        "send_message hard stop: repeated near-duplicate loop at streak=10. "
+                        "This turn is terminated for safety. Next turn: reflect on what went "
+                        "wrong before resuming — consider using 5 Whys or a completely "
+                        "different approach instead of retrying.",
+                    )
+
+                if streak >= self.send_message_loop_warn_limit:
+                    self.log_event(
+                        "send_message_loop_warning",
+                        tool="send_message",
+                        channel_id=target_channel_id,
+                        streak=streak,
+                        similarity_ratio=round(similarity_ratio, 6),
+                        reacted_warning=warning_reacted,
+                    )
+                    return (
+                        f"WARNING: You have sent {streak} near-duplicate messages. "
+                        f"Hard stop at {self.send_message_loop_hard_limit} — after that, "
+                        "this turn will be terminated.\n\n"
+                        "Before that happens, stop and reflect:\n"
+                        "1. What were you trying to accomplish? Did the approach work?\n"
+                        "2. What is a COMPLETELY DIFFERENT way to achieve this?\n"
+                        "3. If you have a 5 Whys or root-cause analysis skill, use it on why "
+                        "this approach failed before trying again.\n\n"
+                        "Do not retry the same action. Think creatively about an alternative, "
+                        "or finish the turn safely."
                     )
 
                 self.log_event(
@@ -424,8 +449,7 @@ class ToolsMixin:
                 )
                 return (
                     "Loop detected in send_message calls. Message delivery is paused for this turn "
-                    "to prevent an infinite output loop. Stop repeating similar messages immediately, "
-                    "change strategy, and finish the turn safely."
+                    "to prevent an infinite output loop."
                 )
 
             sent, sent_message_id, sent_chunks = await self._send_channel_message(
@@ -1450,6 +1474,10 @@ class ToolsMixin:
             list_messages,
             lookup,
             run_shell_tool,
+            read_file,
+            glob_files,
+            edit_file,
+            write_file,
             fetch_url,
             journal,
             list_memory_blocks,
