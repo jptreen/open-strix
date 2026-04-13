@@ -791,6 +791,17 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     error=str(exc),
                     **_error_log_fields(exc),
                 )
+            except json.JSONDecodeError as exc:
+                # Model returned malformed tool arguments (e.g. empty string).
+                # Log as warning, not error — transient model issue, not agent fault.
+                self.log_event(
+                    "warning",
+                    where="event_worker",
+                    warning_type="model_response_parse_error",
+                    source_event_type=event.event_type,
+                    channel_id=event.channel_id,
+                    error=str(exc),
+                )
             except Exception as exc:
                 self._last_turn_failure = (
                     f"Your previous turn ended with an error: {type(exc).__name__}: {exc}. "
