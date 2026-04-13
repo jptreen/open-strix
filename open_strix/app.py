@@ -794,6 +794,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             except json.JSONDecodeError as exc:
                 # Model returned malformed tool arguments (e.g. empty string).
                 # Log as warning, not error — transient model issue, not agent fault.
+                import traceback
                 self.log_event(
                     "warning",
                     where="event_worker",
@@ -801,6 +802,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     source_event_type=event.event_type,
                     channel_id=event.channel_id,
                     error=str(exc),
+                    traceback=traceback.format_exc(),
                 )
             except Exception as exc:
                 self._last_turn_failure = (
