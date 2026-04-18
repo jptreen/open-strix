@@ -148,6 +148,32 @@ def _exception_status_code(exc: Exception) -> int | None:
     return None
 
 
+def _is_http_body_parse_error(exc: json.JSONDecodeError) -> bool:
+    """Detect JSONDecodeErrors originating from httpx HTTP body parsing.
+
+    The anthropic SDK uses httpx under the hood; when the provider
+    returns an empty or truncated HTTP response body, ``Response.json()``
+    calls ``json.loads`` on empty bytes and raises ``JSONDecodeError``
+    from deep inside httpx. That exception bubbles all the way up
+    through the SDK and langchain adapters to our event worker — sharing
+    a class name with the unrelated failure mode of agent-side malformed
+    tool-argument parsing.
+
+    We distinguish the two by walking the traceback: only the empty-body
+    path passes through httpx frames. Legitimate agent code never
+    decodes JSON through httpx, so this is a reliable signal.
+
+    See tony-9k6 for the forensics and why SDK ``max_retries`` does not
+    already catch this.
+    """
+    tb = exc.__traceback__
+    while tb is not None:
+        if "httpx" in tb.tb_frame.f_code.co_filename:
+            return True
+        tb = tb.tb_next
+    return False
+
+
 def _exception_request_id(exc: Exception) -> str | None:
     request_id = getattr(exc, "request_id", None)
     if request_id is None:
@@ -792,13 +818,44 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     **_error_log_fields(exc),
                 )
             except json.JSONDecodeError as exc:
-                # Model returned malformed tool arguments (e.g. empty string).
-                # Log as warning, not error — transient model issue, not agent fault.
+                # Two distinct failure modes share this exception class:
+                #
+                #   1. Empty/truncated HTTP response body from the model
+                #      provider (raised inside httpx.Response.json()).
+                #      Transient network/gateway issue — SDK max_retries
+                #      does NOT catch this because it arrives as a
+                #      successful 200 with zero bytes. The turn is lost
+                #      and must be flagged so the next turn notices.
+                #
+                #   2. Agent-side malformed tool arguments (raised from
+                #      our own parse paths). Agent instruction issue —
+                #      different remediation.
+                #
+                # Disambiguate by traceback frame inspection. See tony-9k6.
                 import traceback
+                is_http_body = _is_http_body_parse_error(exc)
+                if is_http_body:
+                    warning_type = "anthropic_empty_response"
+                    self._last_turn_failure = (
+                        "Your previous turn was dropped because the "
+                        "model provider returned an empty HTTP response "
+                        "body (transient gateway / network issue). No "
+                        "automatic retry was attempted. If the work in "
+                        "that turn was important, re-trigger it."
+                    )
+                else:
+                    warning_type = "model_tool_args_parse_error"
+                    self._last_turn_failure = (
+                        "Your previous turn ended because the model "
+                        "returned malformed tool arguments and parsing "
+                        "failed. Before retrying, consider whether your "
+                        "tool-call shape is well-formed and whether "
+                        "simpler arguments would succeed."
+                    )
                 self.log_event(
                     "warning",
                     where="event_worker",
-                    warning_type="model_response_parse_error",
+                    warning_type=warning_type,
                     source_event_type=event.event_type,
                     channel_id=event.channel_id,
                     error=str(exc),
