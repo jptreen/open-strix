@@ -1232,6 +1232,7 @@ class ToolsMixin:
                 "text": text,
             }
             target = self._memory_block_path(chosen_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(yaml.safe_dump(block, sort_keys=False), encoding="utf-8")
             self.log_event(
                 "file_write",
