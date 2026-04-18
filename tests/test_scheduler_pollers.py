@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from open_strix import scheduler as scheduler_module
 from open_strix.scheduler import PollerConfig, SchedulerMixin
 
 
@@ -198,6 +199,12 @@ class TestOnPollerFire:
 
     @pytest.mark.asyncio
     async def test_poller_no_output(self, tmp_home: Path) -> None:
+        """Empty stdout still emits a poller_complete with events_emitted=0.
+
+        Regression guard for tony-2zb: a silent successful poller run
+        must not be indistinguishable from a poller that never fired.
+        Every clean exit gets exactly one poller_complete event.
+        """
         skill_dir = tmp_home / "skills" / "quiet"
         skill_dir.mkdir(parents=True)
         (skill_dir / "poller.py").write_text("pass\n")
@@ -214,8 +221,14 @@ class TestOnPollerFire:
         await app._on_poller_fire(poller)
 
         assert len(app.enqueued) == 0
-        # Silent when no output — no log noise for routine empty polls
-        assert not any(e["type"] == "poller_no_output" for e in app.events)
+        complete = [e for e in app.events if e["type"] == "poller_complete"]
+        assert len(complete) == 1, (
+            f"expected exactly one poller_complete, got {app.events}"
+        )
+        assert complete[0]["name"] == "quiet-poller"
+        assert complete[0]["events_emitted"] == 0
+        # run_id is recorded for traceability.
+        assert "run_id" in complete[0]
 
     @pytest.mark.asyncio
     async def test_poller_nonzero_exit(self, tmp_home: Path) -> None:
@@ -489,3 +502,280 @@ class TestOnPollerFire:
         assert len(app.enqueued) == 1
         assert app.enqueued[0].channel_id is None
         assert app.enqueued[0].channel_type is None
+
+
+class TestPollerFireWallClockTimeout:
+    """tony-2zb: a wedged await in _run_poller_fire must not hold the
+    APScheduler max_instances=1 slot past POLLER_FIRE_TIMEOUT_SECONDS."""
+
+    @pytest.mark.asyncio
+    async def test_wedged_enqueue_event_times_out_and_logs(
+        self, tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Shrink the deadline so tests stay fast; the real constant
+        # (90s in production) is indirection-tested — what matters is
+        # that the wrapper enforces *some* wall-clock bound.
+        monkeypatch.setattr(scheduler_module, "POLLER_FIRE_TIMEOUT_SECONDS", 0.3)
+
+        skill_dir = tmp_home / "skills" / "wedged"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "w", "prompt": "p"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="wedged-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+
+        # Replace enqueue_event with one that never completes — simulates
+        # the wedge observed on tony-vm (OIE-Mn main/eddy pollers).
+        async def hang_forever(event):  # noqa: ARG001
+            await asyncio.sleep(1000)
+
+        app.enqueue_event = hang_forever  # type: ignore[assignment]
+
+        # Must return (not hang) within the shortened deadline.
+        await asyncio.wait_for(app._on_poller_fire(poller), timeout=5.0)
+
+        timeouts = [e for e in app.events if e["type"] == "poller_fire_timeout"]
+        assert len(timeouts) == 1
+        assert timeouts[0]["name"] == "wedged-poller"
+        assert timeouts[0]["timeout_seconds"] == 0.3
+
+        # Because the fire was cancelled mid-enqueue, poller_complete
+        # must NOT have fired — its absence + the timeout event is the
+        # operator's distinguishable signal.
+        assert not any(e["type"] == "poller_complete" for e in app.events)
+
+    @pytest.mark.asyncio
+    async def test_normal_poller_completes_without_timeout(
+        self, tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fast pollers aren't penalized by the timeout wrapper."""
+        monkeypatch.setattr(scheduler_module, "POLLER_FIRE_TIMEOUT_SECONDS", 5.0)
+
+        skill_dir = tmp_home / "skills" / "fast"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "f", "prompt": "ok"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="fast-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert not any(e["type"] == "poller_fire_timeout" for e in app.events)
+        assert any(e["type"] == "poller_complete" for e in app.events)
+
+
+class TestPollerDedupeKeyRunId:
+    """tony-2zb: dedupe_key must be unique across fires of the same poller.
+
+    event_count resets each fire; pending_scheduler_keys.discard only runs
+    after _event_worker completes. A wedged worker would leave earlier
+    keys in the set, silently deduping future fires without a per-fire nonce.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dedupe_key_includes_run_id_and_event_count(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "dedupe"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'for i in range(2):\n'
+            '    print(json.dumps({"poller": "d", "prompt": f"e{i}"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="dedupe-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 2
+        key0 = app.enqueued[0].dedupe_key
+        key1 = app.enqueued[1].dedupe_key
+        assert key0.startswith("poller:dedupe-poller:")
+        assert key1.startswith("poller:dedupe-poller:")
+        # Same run_id, different event_count
+        prefix0, ec0 = key0.rsplit(":", 1)
+        prefix1, ec1 = key1.rsplit(":", 1)
+        assert prefix0 == prefix1, "same fire ⇒ same run_id prefix"
+        assert ec0 == "0"
+        assert ec1 == "1"
+
+    @pytest.mark.asyncio
+    async def test_dedupe_key_run_id_differs_across_fires(
+        self, tmp_home: Path
+    ) -> None:
+        """Two fires of the same poller produce disjoint dedupe_key sets."""
+        skill_dir = tmp_home / "skills" / "two-fire"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "t", "prompt": "x"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="two-fire-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 2
+        assert app.enqueued[0].dedupe_key != app.enqueued[1].dedupe_key
+
+    @pytest.mark.asyncio
+    async def test_poller_complete_records_run_id(self, tmp_home: Path) -> None:
+        """run_id in poller_complete lets operators correlate events ⇄ fire."""
+        skill_dir = tmp_home / "skills" / "runid"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "r", "prompt": "one"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="runid-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        complete = [e for e in app.events if e["type"] == "poller_complete"]
+        assert len(complete) == 1
+        complete_run_id = complete[0]["run_id"]
+        event_key = app.enqueued[0].dedupe_key
+        # The run_id in the log matches the one embedded in dedupe_key.
+        assert f":{complete_run_id}:" in event_key
+
+
+class TestPollersJsonRoutingDefaults:
+    """tony-2zb gap D: channel_id/channel_type at pollers.json entry level
+    act as per-poller defaults, applied when per-event JSON omits them."""
+
+    def test_discover_parses_entry_level_channel_defaults(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "routed"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "matrix-monitor",
+                "command": "python poller.py",
+                "cron": "*/5 * * * *",
+                "channel_id": "!room:matrix.org",
+                "channel_type": "matrix",
+            }
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert len(pollers) == 1
+        assert pollers[0].channel_id == "!room:matrix.org"
+        assert pollers[0].channel_type == "matrix"
+
+    def test_discover_defaults_channel_fields_to_none(
+        self, tmp_home: Path
+    ) -> None:
+        """Backwards compat: pollers without channel_id/channel_type are None."""
+        skill_dir = tmp_home / "skills" / "unrouted"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {"name": "x", "command": "python x.py", "cron": "*/5 * * * *"}
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert pollers[0].channel_id is None
+        assert pollers[0].channel_type is None
+
+    @pytest.mark.asyncio
+    async def test_entry_level_default_applied_when_event_omits(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "use-default"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "u", "prompt": "no channel in event"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="use-default-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+            channel_id="!default:matrix.org",
+            channel_type="matrix",
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].channel_id == "!default:matrix.org"
+        assert app.enqueued[0].channel_type == "matrix"
+
+    @pytest.mark.asyncio
+    async def test_per_event_channel_overrides_entry_level_default(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "override"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "o", "prompt": "event wins", '
+            '"channel_id": "!event:matrix.org", "channel_type": "matrix"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="override-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+            channel_id="!default:matrix.org",
+            channel_type="matrix",
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        # Per-event value wins so conversational pollers can still route
+        # dynamically even when entry-level defaults are configured.
+        assert app.enqueued[0].channel_id == "!event:matrix.org"

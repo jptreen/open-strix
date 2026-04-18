@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
@@ -46,9 +47,20 @@ class PollerConfig:
     cron: str
     env: dict[str, str]
     skill_dir: Path
+    # Per-poller routing defaults. Applied when a per-event JSON line from
+    # the poller's stdout does NOT itself set channel_id / channel_type.
+    # See tony-2zb for context: these keys were silently ignored previously.
+    channel_id: str | None = None
+    channel_type: str | None = None
 
 
 _SCHEDULER_LOCK = threading.RLock()
+
+# Hard wall-clock timeout for a single _on_poller_fire invocation.
+# Generous upper bound over the 60s subprocess timeout — any await path
+# beyond that (enqueue_event, dedupe bookkeeping) must release within this
+# window so APScheduler's max_instances=1 slot can never wedge permanently.
+POLLER_FIRE_TIMEOUT_SECONDS = 90
 
 
 class SchedulerMixin:
@@ -163,6 +175,18 @@ class SchedulerMixin:
                 env = entry.get("env", {})
                 if not isinstance(env, dict):
                     env = {}
+                raw_channel_id = entry.get("channel_id")
+                channel_id = (
+                    str(raw_channel_id).strip() or None
+                    if raw_channel_id is not None
+                    else None
+                )
+                raw_channel_type = entry.get("channel_type")
+                channel_type = (
+                    str(raw_channel_type).strip() or None
+                    if raw_channel_type is not None
+                    else None
+                )
                 pollers.append(
                     PollerConfig(
                         name=name,
@@ -170,6 +194,8 @@ class SchedulerMixin:
                         cron=cron,
                         env={str(k): str(v) for k, v in env.items()},
                         skill_dir=skill_dir,
+                        channel_id=channel_id,
+                        channel_type=channel_type,
                     ),
                 )
         return pollers
@@ -262,10 +288,44 @@ class SchedulerMixin:
         )
 
     async def _on_poller_fire(self, poller: PollerConfig) -> None:
-        """Run a poller subprocess and enqueue events from its stdout."""
+        """Run a poller and release the APScheduler slot within a hard deadline.
+
+        Wraps :meth:`_run_poller_fire` in a wall-clock timeout so that a
+        wedged ``await`` (e.g. a stuck enqueue_event on a backed-up queue)
+        cannot permanently hold the ``max_instances=1`` slot for this
+        poller. See tony-2zb / tony-761 for the forensic context.
+        """
+        try:
+            await asyncio.wait_for(
+                self._run_poller_fire(poller),
+                timeout=POLLER_FIRE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self.log_event(
+                "poller_fire_timeout",
+                name=poller.name,
+                timeout_seconds=POLLER_FIRE_TIMEOUT_SECONDS,
+            )
+
+    async def _run_poller_fire(self, poller: PollerConfig) -> None:
+        """Run a poller subprocess and enqueue events from its stdout.
+
+        Always emits exactly one ``poller_complete`` event per invocation
+        when the subprocess exits cleanly (even with empty stdout), so
+        the absence of a log is unambiguous signal that a fire never
+        completed (timeout, exec error, or non-zero exit).
+        """
         env = {**os.environ, **poller.env}
         env["STATE_DIR"] = str(poller.skill_dir)
         env["POLLER_NAME"] = poller.name
+
+        # Per-fire nonce so dedupe_key values can never collide across
+        # separate fires of the same poller. event_count resets to 0
+        # each fire, and pending_scheduler_keys.discard only runs after
+        # _event_worker finishes processing — if the worker is wedged,
+        # the previous fire's poller:<name>:0 key remains, silently
+        # deduping the next fire's first event without this nonce.
+        run_id = uuid.uuid4().hex[:8]
 
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -315,8 +375,6 @@ class SchedulerMixin:
             return
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
-        if not stdout_text:
-            return
 
         event_count = 0
         for line in stdout_text.splitlines():
@@ -347,10 +405,16 @@ class SchedulerMixin:
             channel_id = parsed.get("channel_id")
             if channel_id is not None:
                 channel_id = str(channel_id).strip() or None
+            # Fall back to pollers.json-level default when per-event JSON
+            # doesn't specify. Per-event value wins if present.
+            if channel_id is None:
+                channel_id = poller.channel_id
 
             channel_type = parsed.get("channel_type")
             if channel_type is not None:
                 channel_type = str(channel_type).strip() or None
+            if channel_type is None:
+                channel_type = poller.channel_type
 
             # Extract author (sender) and source_id (event_id) so
             # conversational pollers can populate message_history.
@@ -369,7 +433,7 @@ class SchedulerMixin:
                     channel_id=channel_id,
                     channel_type=channel_type,
                     scheduler_name=poller.name,
-                    dedupe_key=f"poller:{poller.name}:{event_count}",
+                    dedupe_key=f"poller:{poller.name}:{run_id}:{event_count}",
                     source_platform=source_platform,
                     author=author,
                     source_id=source_id,
@@ -381,4 +445,5 @@ class SchedulerMixin:
             "poller_complete",
             name=poller.name,
             events_emitted=event_count,
+            run_id=run_id,
         )
