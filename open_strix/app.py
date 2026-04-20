@@ -863,6 +863,16 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 final_text=final_text,
             )
 
+            tool_calls_in_turn = self._collect_tool_calls_in_turn(result)
+            if final_text and "send_message" not in tool_calls_in_turn:
+                self.log_event(
+                    "agent_turn_missing_send_message",
+                    source_event_type=event.event_type,
+                    channel_id=event.channel_id,
+                    final_text=final_text,
+                    tool_calls_in_turn=tool_calls_in_turn,
+                )
+
             # Post-turn hook: validate memory blocks and let agent self-correct
             block_errors = self._validate_memory_blocks()
             if block_errors:
@@ -908,6 +918,19 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         tool=call.get("name"),
                         args=call.get("args"),
                     )
+
+    def _collect_tool_calls_in_turn(self, result: dict[str, Any]) -> list[str]:
+        messages = result.get("messages")
+        if not isinstance(messages, list):
+            return []
+        names: list[str] = []
+        for message in messages:
+            if isinstance(message, AIMessage):
+                for call in message.tool_calls:
+                    name = call.get("name")
+                    if isinstance(name, str):
+                        names.append(name)
+        return names
 
     def _write_session_log(
         self,

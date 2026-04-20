@@ -1861,3 +1861,122 @@ async def test_process_event_does_not_send_final_text_when_agent_skips_send_mess
     )
 
     assert channel.sent == []
+
+
+def _read_events(tmp_path: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_event_logs_missing_send_message_when_final_text_narrates_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            ai = AIMessage(
+                content="Sent my message and added a wave reaction.",
+                tool_calls=[
+                    {"name": "react", "args": {"emoji": "👋"}, "id": "1"},
+                    {"name": "journal", "args": {}, "id": "2"},
+                ],
+            )
+            return {"messages": [ai]}
+
+    app.agent = FakeAgent()
+
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="discord_message",
+            prompt="hello",
+            channel_id="123",
+            author="user",
+            author_id="42",
+            source_id="777",
+        ),
+    )
+
+    events = _read_events(tmp_path)
+    missing = [e for e in events if e.get("type") == "agent_turn_missing_send_message"]
+    assert len(missing) == 1
+    assert missing[0]["final_text"] == "Sent my message and added a wave reaction."
+    assert missing[0]["tool_calls_in_turn"] == ["react", "journal"]
+    assert missing[0]["source_event_type"] == "discord_message"
+    assert missing[0]["channel_id"] == "123"
+
+
+@pytest.mark.asyncio
+async def test_process_event_does_not_log_missing_send_message_when_send_message_called(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessage
+
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            ai = AIMessage(
+                content="here you go",
+                tool_calls=[
+                    {"name": "send_message", "args": {"text": "hi"}, "id": "1"},
+                ],
+            )
+            return {"messages": [ai]}
+
+    app.agent = FakeAgent()
+
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="discord_message",
+            prompt="hello",
+            channel_id="123",
+            author="user",
+            author_id="42",
+            source_id="777",
+        ),
+    )
+
+    events = _read_events(tmp_path)
+    missing = [e for e in events if e.get("type") == "agent_turn_missing_send_message"]
+    assert missing == []
+
+
+@pytest.mark.asyncio
+async def test_process_event_does_not_log_missing_send_message_when_no_final_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeAgent:
+        async def ainvoke(self, _: dict[str, Any]) -> dict[str, Any]:
+            return {"messages": []}
+
+    app.agent = FakeAgent()
+
+    await app._process_event(
+        app_mod.AgentEvent(
+            event_type="discord_message",
+            prompt="hello",
+            channel_id="123",
+            author="user",
+            author_id="42",
+            source_id="777",
+        ),
+    )
+
+    events = _read_events(tmp_path)
+    missing = [e for e in events if e.get("type") == "agent_turn_missing_send_message"]
+    assert missing == []
