@@ -11,6 +11,12 @@ from aiohttp import web
 from aiohttp.web_request import FileField
 
 from .models import AgentEvent
+from .shell_jobs import (
+    normalize_shell_job_scope,
+    normalize_shell_job_stream,
+    parse_shell_job_tail_lines,
+    shell_job_snapshots,
+)
 
 if TYPE_CHECKING:
     from .app import OpenStrixApp
@@ -231,7 +237,7 @@ def _shell_jobs_payload(strix: OpenStrixApp) -> list[dict]:
     if registry is None:
         return []
     try:
-        return [job.snapshot() for job in registry.visible_jobs()]
+        return shell_job_snapshots(registry, scope="visible")
     except Exception:
         return []
 
@@ -309,12 +315,20 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         line-height: 1.1;
       }}
 
+      .status-row {{
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        min-height: 1.3rem;
+      }}
+
       .typing-indicator {{
+        flex: 1 1 auto;
         font-size: 0.75rem;
         color: var(--muted);
         min-height: 1.2em;
-        padding-left: 0.5rem;
-        margin-bottom: 0.15rem;
+        margin: 0;
+        overflow-wrap: anywhere;
       }}
 
       .typing-indicator.status-slow {{
@@ -326,38 +340,50 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         font-weight: bold;
       }}
 
-      .shell-jobs-bar {{
-        display: flex;
-        justify-content: flex-end;
-        padding: 0 0.5rem 0.15rem 0.5rem;
+      .shell-jobs-widget {{
+        position: relative;
+        flex: 0 0 auto;
+        margin-left: auto;
       }}
 
       .shell-jobs-pill {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        font: inherit;
         font-size: 0.72rem;
-        color: var(--muted);
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 10px;
-        padding: 0.1rem 0.55rem;
+        line-height: 1.2;
+        color: var(--accent);
+        background: rgba(13, 118, 110, 0.08);
+        border: 1px solid rgba(13, 118, 110, 0.24);
+        border-radius: 999px;
+        padding: 0.2rem 0.65rem;
         cursor: pointer;
         user-select: none;
+        appearance: none;
+        box-shadow: none;
       }}
 
-      .shell-jobs-pill:hover {{ background: rgba(255,255,255,0.09); }}
+      .shell-jobs-pill:hover,
+      .shell-jobs-pill:focus-visible {{
+        background: rgba(13, 118, 110, 0.14);
+        outline: none;
+      }}
       .shell-jobs-pill[hidden] {{ display: none; }}
 
       .shell-jobs-panel {{
-        position: fixed;
-        right: 1rem;
-        bottom: 6rem;
-        width: min(520px, 90vw);
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 0.55rem);
+        width: min(520px, calc(100vw - 2rem));
         max-height: 60vh;
-        background: #1a1a1a;
-        border: 1px solid #333;
-        border-radius: 8px;
+        background: rgba(26, 32, 40, 0.98);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.85rem;
         padding: 0.6rem;
         font-size: 0.8rem;
-        box-shadow: 0 4px 18px rgba(0,0,0,0.4);
+        box-shadow: 0 18px 40px rgba(24, 32, 40, 0.28);
         overflow: auto;
         z-index: 50;
       }}
@@ -370,9 +396,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
       .shell-job-row:last-child {{ border-bottom: none; }}
       .shell-job-row:hover {{ background: rgba(255,255,255,0.04); }}
-      .shell-job-row .jid {{ font-family: monospace; color: var(--accent); }}
+      .shell-job-row .jid {{ font-family: monospace; color: #7ee4d0; }}
       .shell-job-row .cmd {{ color: #ccc; font-family: monospace; }}
-      .shell-job-row .meta {{ color: var(--muted); font-size: 0.72rem; }}
+      .shell-job-row .meta {{ color: #9caab5; font-size: 0.72rem; }}
 
       .shell-job-output {{
         background: #0d0d0d;
@@ -732,11 +758,13 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
 
       <section class="composer">
         <form class="composer-form" id="composer">
-          <div class="shell-jobs-bar">
-            <span class="shell-jobs-pill" id="shell-jobs-pill" hidden></span>
+          <div class="status-row">
+            <div class="typing-indicator" id="typing-indicator"></div>
+            <div class="shell-jobs-widget" id="shell-jobs-widget">
+              <button class="shell-jobs-pill" id="shell-jobs-pill" type="button" hidden></button>
+              <div class="shell-jobs-panel" id="shell-jobs-panel" hidden></div>
+            </div>
           </div>
-          <div class="shell-jobs-panel" id="shell-jobs-panel" hidden></div>
-          <div class="typing-indicator" id="typing-indicator"></div>
           <textarea id="text" name="text" placeholder="Message {agent_name}..."></textarea>
           <div class="composer-actions">
             <label class="file-label">
@@ -761,12 +789,14 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       const fileListEl = document.getElementById("file-list");
       const sendEl = document.getElementById("send");
       const typingEl = document.getElementById("typing-indicator");
+      const shellJobsWidgetEl = document.getElementById("shell-jobs-widget");
       const shellJobsPillEl = document.getElementById("shell-jobs-pill");
       const shellJobsPanelEl = document.getElementById("shell-jobs-panel");
 
       let shellJobsPanelOpen = false;
       let shellJobsExpandedId = null;
       let currentShellJobs = [];
+      let shellJobOutputState = new Map();
       let pastedFiles = [];
 
       function formatElapsed(sec) {{
@@ -777,19 +807,111 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
         return m + 'm' + s + 's';
       }}
 
+      function escapeHtml(text) {{
+        const escapes = {{
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        }};
+        return String(text ?? '').replace(/[&<>"']/g, (char) => escapes[char]);
+      }}
+
+      function pruneShellJobOutputState() {{
+        const currentIds = new Set(currentShellJobs.map((job) => job.job_id));
+        Array.from(shellJobOutputState.keys()).forEach((jobId) => {{
+          if (!currentIds.has(jobId)) {{
+            shellJobOutputState.delete(jobId);
+          }}
+        }});
+      }}
+
+      function getShellJobOutputText(jobId) {{
+        const state = shellJobOutputState.get(jobId);
+        if (!state) return 'loading…';
+        if (typeof state.text === 'string') return state.text;
+        if (state.error) return state.error;
+        if (state.loading) return 'loading…';
+        return '(no output yet)';
+      }}
+
+      function updateShellJobOutputElement(jobId) {{
+        const el = shellJobsPanelEl.querySelector('[data-output="' + jobId + '"]');
+        if (!el) return;
+        el.textContent = getShellJobOutputText(jobId);
+      }}
+
+      function refreshShellJobOutput(jobId, status) {{
+        const state = shellJobOutputState.get(jobId);
+        if (state && state.loading) {{
+          updateShellJobOutputElement(jobId);
+          return;
+        }}
+        shellJobOutputState.set(jobId, {{
+          ...state,
+          loading: true,
+          error: null,
+        }});
+        updateShellJobOutputElement(jobId);
+        fetch('/api/shell-jobs/' + encodeURIComponent(jobId) + '?tail=1000&stream=both')
+          .then(async (r) => {{
+            const data = await r.json();
+            if (!r.ok) {{
+              throw new Error(data.error || 'failed to load shell job output');
+            }}
+            return data;
+          }})
+          .then((data) => {{
+            const out = (data.stdout_tail || '') + (data.stderr_tail ? '\\n--- stderr ---\\n' + data.stderr_tail : '');
+            shellJobOutputState.set(jobId, {{
+              text: out || '(no output yet)',
+              error: null,
+              loading: false,
+              lastFetchedStatus: status,
+            }});
+            updateShellJobOutputElement(jobId);
+          }})
+          .catch((error) => {{
+            shellJobOutputState.set(jobId, {{
+              text: null,
+              error: error instanceof Error ? error.message : 'failed to load shell job output',
+              loading: false,
+              lastFetchedStatus: status,
+            }});
+            updateShellJobOutputElement(jobId);
+          }});
+      }}
+
       function renderShellJobs(jobs) {{
-        currentShellJobs = jobs || [];
+        currentShellJobs = [...(jobs || [])].sort((a, b) => {{
+          const aRunning = a.status === 'running';
+          const bRunning = b.status === 'running';
+          if (aRunning !== bRunning) {{
+            return aRunning ? -1 : 1;
+          }}
+          return (b.started_at || 0) - (a.started_at || 0);
+        }});
+        pruneShellJobOutputState();
         const running = currentShellJobs.filter(j => j.status === 'running');
+        if (shellJobsExpandedId && !currentShellJobs.some(j => j.job_id === shellJobsExpandedId)) {{
+          shellJobsExpandedId = null;
+        }}
         if (currentShellJobs.length === 0) {{
           shellJobsPillEl.hidden = true;
           shellJobsPanelEl.hidden = true;
           shellJobsPanelOpen = false;
+          shellJobsExpandedId = null;
+          shellJobsPillEl.setAttribute('aria-expanded', 'false');
           return;
         }}
         const label = running.length > 0
-          ? running.length + ' shell task' + (running.length === 1 ? '' : 's') + ' running'
-          : currentShellJobs.length + ' shell task' + (currentShellJobs.length === 1 ? '' : 's') + ' (finished)';
+          ? running.length + ' running'
+          : currentShellJobs.length + ' recent';
         shellJobsPillEl.textContent = label;
+        const labelCount = running.length > 0 ? running.length : currentShellJobs.length;
+        shellJobsPillEl.setAttribute('aria-label', label + ' shell job' + (labelCount === 1 ? '' : 's'));
+        shellJobsPillEl.setAttribute('aria-expanded', shellJobsPanelOpen ? 'true' : 'false');
         shellJobsPillEl.hidden = false;
         if (shellJobsPanelOpen) {{
           renderShellJobsPanel();
@@ -797,22 +919,23 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       }}
 
       function renderShellJobsPanel() {{
+        shellJobsPillEl.setAttribute('aria-expanded', shellJobsPanelOpen ? 'true' : 'false');
         if (!shellJobsPanelOpen) {{ shellJobsPanelEl.hidden = true; return; }}
         shellJobsPanelEl.hidden = false;
         const rows = currentShellJobs.map(j => {{
-          const cmd = (j.command || '').slice(0, 80);
+          const cmd = escapeHtml((j.command || '').slice(0, 160));
           const statusColor = j.status === 'running' ? '#6fdc8c' : (j.exit_code === 0 ? '#888' : '#e63946');
           const expanded = shellJobsExpandedId === j.job_id;
           const outputHtml = expanded
-            ? '<div class="shell-job-output" data-output="' + j.job_id + '">loading…</div>'
+            ? '<div class="shell-job-output" data-output="' + j.job_id + '"></div>'
             : '';
           return (
             '<div class="shell-job-row" data-job="' + j.job_id + '">' +
-              '<div><span class="jid">' + j.job_id + '</span> ' +
-              '<span style="color:' + statusColor + '">' + j.status + '</span> ' +
+              '<div><span class="jid">' + escapeHtml(j.job_id) + '</span> ' +
+              '<span style="color:' + statusColor + '">' + escapeHtml(j.status) + '</span> ' +
               '<span class="meta">pid=' + j.pid + ' · ' + formatElapsed(j.elapsed_seconds) +
               (j.exit_code != null ? ' · exit=' + j.exit_code : '') + '</span></div>' +
-              '<div class="cmd">$ ' + cmd.replace(/</g, '&lt;') + '</div>' +
+              '<div class="cmd">$ ' + cmd + '</div>' +
               outputHtml +
             '</div>'
           );
@@ -823,23 +946,30 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
             const jid = row.getAttribute('data-job');
             shellJobsExpandedId = (shellJobsExpandedId === jid) ? null : jid;
             renderShellJobsPanel();
-            if (shellJobsExpandedId === jid) {{
-              fetch('/api/shell-jobs/' + encodeURIComponent(jid) + '?tail=400')
-                .then(r => r.json())
-                .then(d => {{
-                  const el = shellJobsPanelEl.querySelector('[data-output="' + jid + '"]');
-                  if (!el) return;
-                  const out = (d.stdout_tail || '') + (d.stderr_tail ? '\\n--- stderr ---\\n' + d.stderr_tail : '');
-                  el.textContent = out || '(no output yet)';
-                }})
-                .catch(() => {{}});
-            }}
           }});
         }});
+        if (shellJobsExpandedId) {{
+          const expandedJob = currentShellJobs.find((job) => job.job_id === shellJobsExpandedId);
+          if (expandedJob) {{
+            updateShellJobOutputElement(expandedJob.job_id);
+            const state = shellJobOutputState.get(expandedJob.job_id);
+            if (!state || state.lastFetchedStatus !== expandedJob.status || expandedJob.status === 'running') {{
+              refreshShellJobOutput(expandedJob.job_id, expandedJob.status);
+            }}
+          }}
+        }}
       }}
 
       shellJobsPillEl.addEventListener('click', () => {{
+        if (currentShellJobs.length === 0) return;
         shellJobsPanelOpen = !shellJobsPanelOpen;
+        renderShellJobsPanel();
+      }});
+
+      document.addEventListener('click', (event) => {{
+        if (!shellJobsPanelOpen) return;
+        if (shellJobsWidgetEl.contains(event.target)) return;
+        shellJobsPanelOpen = false;
         renderShellJobsPanel();
       }});
 
@@ -1453,25 +1583,37 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
             raise web.HTTPNotFound()
         return web.FileResponse(target)
 
-    async def list_shell_jobs(_: web.Request) -> web.Response:
+    async def list_shell_jobs(request: web.Request) -> web.Response:
+        try:
+            scope = normalize_shell_job_scope(request.query.get("scope"))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
         registry = getattr(strix, "shell_jobs", None)
-        if registry is None:
-            return web.json_response({"jobs": []})
-        return web.json_response({"jobs": [job.snapshot() for job in registry.all_jobs()]})
+        return web.json_response(
+            {
+                "scope": scope,
+                "jobs": shell_job_snapshots(registry, scope=scope),
+            },
+        )
 
     async def shell_job_detail(request: web.Request) -> web.Response:
         registry = getattr(strix, "shell_jobs", None)
         if registry is None:
-            raise web.HTTPNotFound()
-        job_id = request.match_info["job_id"]
+            return web.json_response({"error": "shell jobs unavailable"}, status=404)
         try:
-            tail_lines = int(request.query.get("tail", "400"))
-        except ValueError:
-            tail_lines = 400
-        try:
-            data = registry.read_output(job_id, tail_lines=tail_lines, stream="both")
-        except KeyError:
-            raise web.HTTPNotFound()
+            tail_lines = parse_shell_job_tail_lines(request.query.get("tail"))
+            stream = normalize_shell_job_stream(request.query.get("stream"))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+        data = registry.read_output(
+            request.match_info["job_id"],
+            tail_lines=tail_lines,
+            stream=stream,
+        )
+        if "error" in data:
+            return web.json_response(data, status=404)
         return web.json_response(data)
 
     app.router.add_get("/", index)

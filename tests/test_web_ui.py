@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict, deque
 import io
 import json
@@ -15,6 +16,7 @@ import pytest
 from open_strix.config import AppConfig, RepoLayout
 from open_strix.discord import DiscordMixin
 from open_strix.models import AgentEvent
+from open_strix.shell_jobs import ShellJobRegistry
 from open_strix.web_ui import (
     WebChatMixin,
     _build_web_ui_app,
@@ -40,6 +42,7 @@ class DummyStrix(DiscordMixin, WebChatMixin):
         self.current_event_label: str | None = None
         self.current_turn_start: float | None = None
         self.discord_client = None
+        self.shell_jobs = ShellJobRegistry(self.layout.logs_dir / "shell-jobs")
         self.logged: list[dict[str, object]] = []
         self.enqueued: list[AgentEvent] = []
 
@@ -93,7 +96,22 @@ def test_web_ui_page_escapes_shell_job_output_newlines_in_inline_js(tmp_path: Pa
 
     page = _render_web_ui_page(strix)
 
-    assert "const out = (d.stdout_tail || '') + (d.stderr_tail ? '\\n--- stderr ---\\n' + d.stderr_tail : '');" in page
+    assert "const out = (data.stdout_tail || '') + (data.stderr_tail ? '\\n--- stderr ---\\n' + data.stderr_tail : '');" in page
+
+
+def test_web_ui_page_places_shell_jobs_widget_in_status_row(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+
+    page = _render_web_ui_page(strix)
+
+    assert 'class="status-row"' in page
+    assert 'class="shell-jobs-widget" id="shell-jobs-widget"' in page
+    assert 'class="shell-jobs-pill" id="shell-jobs-pill" type="button"' in page
+    assert "let shellJobOutputState = new Map();" in page
+    assert "function refreshShellJobOutput(jobId, status)" in page
+    assert "function updateShellJobOutputElement(jobId)" in page
+    assert "function escapeHtml(text)" in page
+    assert "shellJobsWidgetEl.contains(event.target)" in page
 
 
 def test_web_attachment_payload_strips_leading_slashes_from_urls(tmp_path: Path) -> None:
@@ -284,6 +302,55 @@ async def test_list_messages_includes_turn_elapsed_when_processing(tmp_path: Pat
     assert body["is_processing"] is True
     assert body["turn_elapsed_seconds"] is not None
     assert body["turn_elapsed_seconds"] >= 44.0
+
+
+@pytest.mark.asyncio
+async def test_list_messages_includes_running_shell_jobs_immediately(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    job = strix.shell_jobs.spawn("sleep 0.8", argv=["bash", "-lc", "sleep 0.8"])
+    app = _build_web_ui_app(strix)
+    handler = _get_route_handler(app, "/api/messages", "GET")
+
+    request = make_mocked_request("GET", "/api/messages", app=app)
+    response = await handler(request)
+
+    body = json.loads(response.text)
+    assert [item["job_id"] for item in body["shell_jobs"]] == [job.job_id]
+    assert body["shell_jobs"][0]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_web_ui_shell_jobs_routes_return_running_jobs_and_output(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    app = _build_web_ui_app(strix)
+
+    running = strix.shell_jobs.spawn("sleep 0.8", argv=["bash", "-lc", "sleep 0.8"])
+    completed_cmd = "printf 'stdout\\n'; printf 'stderr\\n' >&2"
+    completed = strix.shell_jobs.spawn(completed_cmd, argv=["bash", "-lc", completed_cmd])
+    deadline = time.monotonic() + 2.0
+    while completed.exit_code is None:
+        assert time.monotonic() < deadline
+        await asyncio.sleep(0.01)
+
+    list_handler = _get_route_handler(app, "/api/shell-jobs", "GET")
+    list_request = make_mocked_request("GET", "/api/shell-jobs", app=app)
+    list_response = await list_handler(list_request)
+    list_body = json.loads(list_response.text)
+    assert list_body["scope"] == "running"
+    assert [item["job_id"] for item in list_body["jobs"]] == [running.job_id]
+
+    detail_handler = _get_route_handler(app, "/api/shell-jobs/{job_id}", "GET")
+    detail_request = make_mocked_request(
+        "GET",
+        f"/api/shell-jobs/{completed.job_id}",
+        app=app,
+        match_info={"job_id": completed.job_id},
+    )
+    detail_response = await detail_handler(detail_request)
+    detail_body = json.loads(detail_response.text)
+    assert detail_body["job_id"] == completed.job_id
+    assert "stdout" in detail_body["stdout_tail"]
+    assert "stderr" in detail_body["stderr_tail"]
 
 
 @pytest.mark.asyncio

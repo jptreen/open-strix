@@ -42,19 +42,47 @@ def test_spawn_captures_stdout_to_file(tmp_path: Path) -> None:
     assert data["status"] == "exited_ok"
 
 
+def test_spawn_streams_python_stdout_before_exit(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+    cmd = """uv run python - <<'PY'
+import time
+print("hello-python")
+time.sleep(0.4)
+PY"""
+    job = reg.spawn(cmd, argv=["bash", "-lc", cmd])
+
+    assert _wait_until(
+        lambda: "hello-python" in reg.read_output(job.job_id, tail_lines=10, stream="stdout")["stdout_tail"],
+        timeout=2.0,
+    ), "python stdout should stream before process exit"
+
+    snap = reg.get(job.job_id).snapshot()
+    assert snap["status"] == "running"
+
+
+def test_running_jobs_are_visible_immediately(tmp_path: Path) -> None:
+    reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
+    cmd = 'sleep 0.8'
+    job = reg.spawn(cmd, argv=['bash', '-lc', cmd])
+
+    visible_now = reg.visible_jobs()
+    assert any(j.job_id == job.job_id for j in visible_now)
+
+
 def test_visibility_threshold(tmp_path: Path) -> None:
-    """Jobs younger than the threshold should not be UI-visible."""
+    """Short finished jobs should not be UI-visible until they age into the grace window."""
     reg = ShellJobRegistry(jobs_dir=tmp_path / "jobs")
     cmd = 'echo fast'
     job = reg.spawn(cmd, argv=['bash', '-lc', cmd])
+    assert _wait_until(lambda: _finished(reg.get(job.job_id)))
+
     visible_now = reg.visible_jobs()
     assert all(j.job_id != job.job_id for j in visible_now), \
-        "freshly-spawned short job must not be UI-visible immediately"
+        "short finished job must not be UI-visible immediately"
 
     # Simulate time passing.
     j = reg.get(job.job_id)
     j.started_at -= UI_VISIBILITY_THRESHOLD_SECONDS + 1
-    assert _wait_until(lambda: _finished(reg.get(job.job_id)))
 
     # During grace window it should still be visible.
     visible = reg.visible_jobs()

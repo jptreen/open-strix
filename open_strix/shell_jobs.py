@@ -11,7 +11,8 @@ Design notes:
   decides what signal to use). Finished jobs linger in the registry so the
   LLM can still retrieve their final output.
 - No algedonic signals. The tool description is the only nudge toward async.
-- 10-second threshold for UI visibility is hardcoded; not configurable.
+- Running jobs are visible to the UI immediately. Finished jobs only linger in
+  the UI if they ran long enough to be worth surfacing.
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ from typing import Optional
 
 UI_VISIBILITY_THRESHOLD_SECONDS = 10
 POST_EXIT_GRACE_SECONDS = 15
+SHELL_JOB_OUTPUT_DEFAULT_TAIL_LINES = 1000
+SHELL_JOB_OUTPUT_MAX_TAIL_LINES = 2000
+DEFAULT_SHELL_JOB_SCOPE = "running"
+VALID_SHELL_JOB_SCOPES = frozenset({"running", "visible", "all"})
+DEFAULT_SHELL_JOB_STREAM = "both"
+VALID_SHELL_JOB_STREAMS = frozenset({"stdout", "stderr", "both"})
 
 
 @dataclass
@@ -117,10 +124,15 @@ class ShellJobRegistry:
         stderr_f = stderr_path.open("wb")
 
         try:
+            env = os.environ.copy()
+            # Python is a common job runner here; force unbuffered output so
+            # "print then sleep" jobs stream into the UI while still running.
+            env.setdefault("PYTHONUNBUFFERED", "1")
             popen_kwargs: dict = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
                 "bufsize": 0,
+                "env": env,
             }
             # Put child in its own process group so the agent can send signals
             # to it (via bash) without affecting the harness.
@@ -198,16 +210,29 @@ class ShellJobRegistry:
         with self._lock:
             return list(self._jobs.values())
 
+    def _sorted_jobs(self, jobs: list[ShellJob]) -> list[ShellJob]:
+        return sorted(
+            jobs,
+            key=lambda job: (job.exit_code is not None, -job.started_at),
+        )
+
+    def running_jobs(self) -> list[ShellJob]:
+        return self._sorted_jobs([job for job in self.all_jobs() if job.exit_code is None])
+
     def visible_jobs(self, *, now: Optional[float] = None) -> list[ShellJob]:
         """Jobs the UI should surface.
 
-        A job becomes visible once its elapsed time exceeds the 10s threshold.
-        Finished jobs stay visible for POST_EXIT_GRACE_SECONDS so the UI can
-        show the "just finished" state, then drop out.
+        Running jobs are visible immediately so the user can inspect them as
+        soon as they start. Finished jobs stay visible for
+        POST_EXIT_GRACE_SECONDS only if they ran long enough to cross the
+        visibility threshold, so the UI does not flicker for tiny async tasks.
         """
         now = now if now is not None else time.time()
         visible: list[ShellJob] = []
         for job in self.all_jobs():
+            if job.exit_code is None:
+                visible.append(job)
+                continue
             elapsed = (job.finished_at or now) - job.started_at
             if elapsed < UI_VISIBILITY_THRESHOLD_SECONDS:
                 continue
@@ -217,7 +242,7 @@ class ShellJobRegistry:
             ):
                 continue
             visible.append(job)
-        return visible
+        return self._sorted_jobs(visible)
 
     def read_output(
         self,
@@ -253,3 +278,61 @@ class ShellJobRegistry:
         result["stdout_path"] = str(job.stdout_path)
         result["stderr_path"] = str(job.stderr_path)
         return result
+
+
+def normalize_shell_job_scope(
+    scope: str | None,
+    *,
+    default: str = DEFAULT_SHELL_JOB_SCOPE,
+) -> str:
+    resolved = (scope or default).strip().lower() or default
+    if resolved not in VALID_SHELL_JOB_SCOPES:
+        allowed = ", ".join(f'"{item}"' for item in sorted(VALID_SHELL_JOB_SCOPES))
+        raise ValueError(f"scope must be one of: {allowed}")
+    return resolved
+
+
+def normalize_shell_job_stream(
+    stream: str | None,
+    *,
+    default: str = DEFAULT_SHELL_JOB_STREAM,
+) -> str:
+    resolved = (stream or default).strip().lower() or default
+    if resolved not in VALID_SHELL_JOB_STREAMS:
+        allowed = ", ".join(f'"{item}"' for item in sorted(VALID_SHELL_JOB_STREAMS))
+        raise ValueError(f"stream must be one of: {allowed}")
+    return resolved
+
+
+def parse_shell_job_tail_lines(
+    raw_value: str | None,
+    *,
+    default: int = SHELL_JOB_OUTPUT_DEFAULT_TAIL_LINES,
+) -> int:
+    if raw_value is None or not raw_value.strip():
+        return default
+    try:
+        tail_lines = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("tail must be an integer") from exc
+    if tail_lines <= 0:
+        raise ValueError("tail must be > 0")
+    return min(tail_lines, SHELL_JOB_OUTPUT_MAX_TAIL_LINES)
+
+
+def shell_job_snapshots(
+    registry: ShellJobRegistry | None,
+    *,
+    scope: str = DEFAULT_SHELL_JOB_SCOPE,
+) -> list[dict]:
+    if registry is None:
+        return []
+
+    resolved_scope = normalize_shell_job_scope(scope)
+    if resolved_scope == "running":
+        jobs = registry.running_jobs()
+    elif resolved_scope == "visible":
+        jobs = registry.visible_jobs()
+    else:
+        jobs = registry._sorted_jobs(registry.all_jobs())
+    return [job.snapshot() for job in jobs]
