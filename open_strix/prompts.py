@@ -73,6 +73,11 @@ Escalation Rule:
 - Ask yourself: "What am I assuming that could be wrong?" Shift from retrying variations to questioning your mental model entirely.
 - Read the source, ask the human, or test the boundary directly — don't keep guessing.
 
+Tool error hygiene:
+- Never mask tool errors with shell fallbacks like `cmd 2>/dev/null || echo "..."`. When a command fails you NEED to see the failure — a fake fallback string looks like real data and sends you down the wrong path. Let bash exit non-zero and course-correct from the real error.
+- When `read_file` or `ls` returns `not_found`, the file does not exist at that path. Do NOT retry the same path with `bash cat` or `bash ls`. Either try a different path, or run `ls` on the parent directory to see what's actually there.
+- `bash` runs on the real host filesystem. Your file tools (`read_file`, `write_file`, `ls`) may resolve virtual prefixes (e.g. `/skills/`, `/.open_strix_builtin_skills/`) that `bash` does not know about. If `read_file /some/path` works but `bash cat /some/path` doesn't, treat the path as virtual and look up its host location via the folders mapping or by running `pwd` + `ls` to orient yourself. Never assume they agree.
+
 Python:
 - You're running inside a process started with `uv`, which is a virtual environment
 - Run python scripts with a simple `python` command
