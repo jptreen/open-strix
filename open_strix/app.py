@@ -862,6 +862,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     traceback=traceback.format_exc(),
                 )
             except Exception as exc:
+                import traceback
                 self._last_turn_failure = (
                     f"Your previous turn ended with an error: {type(exc).__name__}: {exc}. "
                     "Before retrying, reflect on what went wrong. If this is a recurring "
@@ -874,9 +875,12 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         emoji=ERROR_REACTION_EMOJI,
                         include_bot=False,
                     )
-                error_message_sent = False
-                if self.is_local_web_channel(event.channel_id):
-                    error_message_sent = await self._send_local_web_error_message(event, exc)
+                # Best-effort apology to the source channel. Before tony-40w
+                # this only fired for local-web; Matrix/Discord/etc. silently
+                # swallowed the whole turn. We now attempt delivery on any
+                # channel that has a channel_id, wrapped in its own try/except
+                # so a failing apology can never crash the worker.
+                error_message_sent = await self._send_error_reply(event, exc)
                 self.log_event(
                     "error",
                     where="event_worker",
@@ -884,6 +888,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     error=str(exc),
                     reacted_to_last_user_message=reacted,
                     error_message_sent=error_message_sent,
+                    traceback=traceback.format_exc(),
                     **_error_log_fields(exc),
                 )
             finally:
@@ -907,6 +912,42 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             text=text,
         )
         return sent
+
+    async def _send_error_reply(self, event: AgentEvent, exc: Exception) -> bool:
+        """Best-effort apology to the source channel after a crashed turn.
+
+        Works for any channel with a channel_id: local-web goes through the
+        in-process web handler, everything else (Matrix, Discord, any
+        config-driven handler) goes through the normal routing in
+        _send_channel_message. Failures are caught and logged so a broken
+        apology path can never crash the worker — the primary error-log
+        entry still fires.
+        """
+        if not event.channel_id:
+            return False
+        text = _humanize_local_web_error(exc)
+        try:
+            if self.is_local_web_channel(event.channel_id):
+                sent, _, _ = await self._send_web_message(
+                    channel_id=str(event.channel_id),
+                    text=text,
+                )
+            else:
+                sent, _, _ = await self._send_channel_message(
+                    channel_id=str(event.channel_id),
+                    text=text,
+                    channel_type=event.channel_type,
+                )
+            return bool(sent)
+        except Exception as send_exc:  # noqa: BLE001 — never let the apology kill the worker
+            self.log_event(
+                "error_reply_send_failed",
+                channel_id=event.channel_id,
+                channel_type=event.channel_type,
+                primary_error=f"{type(exc).__name__}: {exc}",
+                send_error=f"{type(send_exc).__name__}: {send_exc}",
+            )
+            return False
 
     def _validate_memory_blocks(self) -> list[str]:
         """Check all block YAML files for parse errors. Returns list of error descriptions."""
