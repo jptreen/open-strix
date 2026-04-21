@@ -846,7 +846,21 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     async def _process_event(self, event: AgentEvent) -> None:
         self._current_turn_sent_messages = []
         self._reset_send_message_circuit_breaker()
+        # Turn-time instrumentation (#91): baseline measurement that lets the
+        # eventual same-turn batching layer be evaluated against real numbers.
+        turn_start = time.monotonic()
+        timings: dict[str, float] = {
+            "context_load_seconds": 0.0,
+            "agent_invoke_seconds": 0.0,
+            "block_validation_seconds": 0.0,
+            "block_repair_invoke_seconds": 0.0,
+            "git_sync_seconds": 0.0,
+        }
+        repair_invoke_count = 0
+
+        prompt_start = time.monotonic()
         prompt = self._render_prompt(event)
+        timings["context_load_seconds"] = time.monotonic() - prompt_start
         self.log_event(
             "agent_invoke_start",
             source_event_type=event.event_type,
@@ -854,8 +868,10 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             scheduler_name=event.scheduler_name,
         )
         try:
+            invoke_start = time.monotonic()
             async with self._typing_indicator(event):
                 result = await self.agent.ainvoke({"messages": [HumanMessage(content=prompt)]})
+            timings["agent_invoke_seconds"] = time.monotonic() - invoke_start
             self._log_agent_trace(result)
             self._write_session_log(event, prompt, result)
 
@@ -878,7 +894,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 )
 
             # Post-turn hook: validate memory blocks and let agent self-correct
+            validation_start = time.monotonic()
             block_errors = self._validate_memory_blocks()
+            timings["block_validation_seconds"] = time.monotonic() - validation_start
             if block_errors:
                 error_list = "\n".join(f"  - {e}" for e in block_errors)
                 repair_prompt = (
@@ -892,10 +910,13 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                     broken_blocks=[e.split(":")[0] for e in block_errors],
                     error_count=len(block_errors),
                 )
+                repair_start = time.monotonic()
                 async with self._typing_indicator(event):
                     result = await self.agent.ainvoke(
                         {"messages": [HumanMessage(content=repair_prompt)]}
                     )
+                timings["block_repair_invoke_seconds"] = time.monotonic() - repair_start
+                repair_invoke_count = 1
                 self._log_agent_trace(result)
                 # Check again — log but don't loop
                 remaining_errors = self._validate_memory_blocks()
@@ -905,10 +926,22 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         broken_blocks=[e.split(":")[0] for e in remaining_errors],
                     )
 
+            git_start = time.monotonic()
             await self._run_post_turn_git_sync(event)
+            timings["git_sync_seconds"] = time.monotonic() - git_start
         finally:
             self._reset_send_message_circuit_breaker()
             self._current_turn_sent_messages = None
+            rounded = {key: round(value, 4) for key, value in timings.items()}
+            self.log_event(
+                "turn_timing",
+                source_event_type=event.event_type,
+                channel_id=event.channel_id,
+                scheduler_name=event.scheduler_name,
+                total_seconds=round(time.monotonic() - turn_start, 4),
+                repair_invoke_count=repair_invoke_count,
+                **rounded,
+            )
 
     def _log_agent_trace(self, result: dict[str, Any]) -> None:
         messages = result.get("messages")
