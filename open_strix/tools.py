@@ -20,6 +20,7 @@ from langchain_core.tools import ToolException, tool
 
 from .discord import ERROR_REACTION_EMOJI, WARNING_REACTION_EMOJI
 from .scheduler import SchedulerJob, _SCHEDULER_LOCK
+from .virtual_paths import resolve_virtual_path
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
@@ -757,7 +758,10 @@ class ToolsMixin:
                 offset: Line number to start reading from (0-based).
                 limit: Maximum number of lines to return.
             """
-            resolved = Path(file_path).expanduser().resolve()
+            # tony-ugg: remap virtual skill paths (e.g. /skills/x/SKILL.md)
+            # surfaced by the deepagents skills middleware to real host
+            # paths rooted at the agent home.
+            resolved = resolve_virtual_path(file_path, self.home)
             if not resolved.is_file():
                 self.log_event(
                     "tool_call_error",
@@ -807,7 +811,8 @@ class ToolsMixin:
                 pattern: Glob pattern (e.g. '**/*.py', 'state/*.md').
                 path: Directory to search in. Defaults to current directory.
             """
-            base = Path(path).expanduser().resolve()
+            # tony-ugg: remap virtual skill prefixes to real host paths.
+            base = resolve_virtual_path(path, self.home)
             if not base.is_dir():
                 return f"Not a directory: {base}"
 
@@ -850,7 +855,8 @@ class ToolsMixin:
                 old_string: The exact text to find and replace (must be unique in the file).
                 new_string: The replacement text.
             """
-            resolved = Path(file_path).expanduser().resolve()
+            # tony-ugg: remap virtual skill prefixes to real host paths.
+            resolved = resolve_virtual_path(file_path, self.home)
             if not resolved.is_file():
                 return f"File not found: {resolved}"
 
@@ -894,7 +900,11 @@ class ToolsMixin:
                 file_path: Path to the file to write.
                 content: The full content to write.
             """
-            resolved = Path(file_path).expanduser().resolve()
+            # tony-ugg: remap virtual skill prefixes so `write_file
+            # /skills/new-skill/SKILL.md` scaffolds a new skill at the
+            # real ``{home}/skills/new-skill/SKILL.md`` rather than
+            # trying to mkdir ``/skills`` on the host root.
+            resolved = resolve_virtual_path(file_path, self.home)
 
             resolved.parent.mkdir(parents=True, exist_ok=True)
 
