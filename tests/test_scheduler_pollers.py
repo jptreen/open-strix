@@ -811,6 +811,90 @@ class TestPollersJsonRoutingDefaults:
         assert app.enqueued[0].channel_id == "!event:matrix.org"
 
 
+class TestPollerPhoneBookEnrichment:
+    """tony-snt: scheduler enriches the phone book from poller events,
+    mirroring Discord's update_from_message hook."""
+
+    @pytest.mark.asyncio
+    async def test_poller_author_added_to_phone_book(
+        self, tmp_path: Path
+    ) -> None:
+        # Need a real phone_book on FakeApp + a writable phone_book_file
+        # on the layout for the enrichment guard to fire.
+        from open_strix.phone_book import PhoneBook
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        skill_dir = skills_dir / "pb_test"
+        skill_dir.mkdir()
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "poller": "zulip", "prompt": "hi",\n'
+            '    "channel_id": "c1", "channel_type": "zulip",\n'
+            '    "sender": "Alice Example", "author_id": "42",\n'
+            '    "event_id": "700", "is_bot": False\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="pb-test",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_path)
+        app.phone_book = PhoneBook()
+        app.layout.phone_book_file = tmp_path / "phone_book.md"
+
+        await app._on_poller_fire(poller)
+
+        # One entry should be added for author_id=42 with name="Alice Example".
+        assert "42" in app.phone_book.entries
+        entry = app.phone_book.entries["42"]
+        assert entry.name == "Alice Example"
+        assert entry.kind == "user"
+        assert entry.is_bot is False
+        # Phone book file written.
+        assert app.layout.phone_book_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_poller_missing_author_id_skipped(
+        self, tmp_path: Path
+    ) -> None:
+        """No author_id means no phone book enrichment — avoids stub
+        entries keyed off empty strings."""
+        from open_strix.phone_book import PhoneBook
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        skill_dir = skills_dir / "pb_noid"
+        skill_dir.mkdir()
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "poller": "zulip", "prompt": "hi",\n'
+            '    "channel_id": "c1", "channel_type": "zulip",\n'
+            '    "sender": "Alice", "event_id": "700"\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="pb-noid",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_path)
+        app.phone_book = PhoneBook()
+        app.layout.phone_book_file = tmp_path / "phone_book.md"
+
+        await app._on_poller_fire(poller)
+
+        assert app.phone_book.entries == {}
+        assert not app.layout.phone_book_file.exists()
+
+
 class TestPollerEventRichFields:
     """tony-833 / tony-94l / tony-8cl: poller events may emit is_bot,
     timestamp, channel_name, channel_conversation_type, channel_visibility.

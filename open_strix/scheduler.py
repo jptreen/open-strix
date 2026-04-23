@@ -489,6 +489,13 @@ class SchedulerMixin:
             if author is not None:
                 author = str(author).strip() or None
 
+            # author_id is the stable platform id (Zulip user_id,
+            # Matrix mxid, etc.) used as the phone book key. Falls back
+            # to None if the poller doesn't emit it.
+            author_id = parsed.get("author_id") or parsed.get("sender_id")
+            if author_id is not None:
+                author_id = str(author_id).strip() or None
+
             source_id = parsed.get("event_id") or parsed.get("source_id")
             if source_id is not None:
                 source_id = str(source_id).strip() or None
@@ -528,12 +535,41 @@ class SchedulerMixin:
                     dedupe_key=f"poller:{poller.name}:{run_id}:{event_count}",
                     source_platform=source_platform,
                     author=author,
+                    author_id=author_id,
                     source_id=source_id,
                     is_bot=is_bot,
                     timestamp=timestamp,
                 ),
             )
             event_count += 1
+
+            # Phone book enrichment for conversational pollers (tony-snt).
+            # Mirrors Discord's update_from_message call in
+            # handle_discord_message so aliases like "@jptreen" resolve
+            # across platforms uniformly. Only runs when we have the
+            # minimum fields needed (channel_type + author_id).
+            if channel_type and author_id and hasattr(self, "phone_book"):
+                try:
+                    from .phone_book import update_from_fields, save_phone_book
+                    if update_from_fields(
+                        self.phone_book,
+                        author_id=author_id,
+                        name=author,
+                        is_bot=is_bot,
+                    ):
+                        save_phone_book(
+                            self.phone_book,
+                            self.layout.phone_book_file,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # Phone book enrichment is a side-benefit; never let
+                    # it interfere with the core scheduling loop.
+                    self.log_event(
+                        "poller_phone_book_update_failed",
+                        name=poller.name,
+                        author_id=author_id,
+                        error=str(exc),
+                    )
 
         self.log_event(
             "poller_complete",

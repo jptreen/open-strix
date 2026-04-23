@@ -208,6 +208,32 @@ def update_from_message(book: PhoneBook, author: Any) -> bool:
     return book.add(PhoneBookEntry(id=author_id, name=name, kind="user", is_bot=is_bot))
 
 
+def update_from_fields(
+    book: PhoneBook,
+    *,
+    author_id: str | None,
+    name: str | None,
+    is_bot: bool = False,
+) -> bool:
+    """Add or update a user entry from plain fields (poller path).
+
+    Discord's update_from_message relies on the duck-typed Discord message
+    author object. Poller-driven channels don't have that — they produce
+    plain JSON — so this is the parallel entry point the scheduler uses
+    to enrich the phone book after parsing poller events. Returns True
+    if the book changed.
+    """
+    if not author_id:
+        return False
+    author_id = str(author_id).strip()
+    if not author_id:
+        return False
+    display = str(name).strip() if name else author_id
+    return book.add(
+        PhoneBookEntry(id=author_id, name=display, kind="user", is_bot=bool(is_bot)),
+    )
+
+
 # ------------------------------------------------------------------
 # Persistence
 # ------------------------------------------------------------------
