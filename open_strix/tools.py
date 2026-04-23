@@ -20,7 +20,7 @@ from langchain_core.tools import ToolException, tool
 
 from .discord import ERROR_REACTION_EMOJI, WARNING_REACTION_EMOJI
 from .scheduler import SchedulerJob, _SCHEDULER_LOCK
-from .virtual_paths import resolve_virtual_path
+from .virtual_paths import remap_virtual_paths_in_command, resolve_virtual_path
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
@@ -652,6 +652,25 @@ class ToolsMixin:
                 return "timeout_seconds must be > 0."
             if max_output_chars <= 0:
                 return "max_output_chars must be > 0."
+
+            # tony-ugg: rewrite virtual skill-root tokens (e.g.
+            # ``/skills/adhd-research/``) to their real host paths
+            # rooted at the agent home. Quoted tokens are preserved
+            # so grep patterns and string literals aren't mangled.
+            # Unparseable commands (unbalanced quotes) fall through
+            # unchanged — let the shell complain rather than guess.
+            remapped_command, virtual_subs = remap_virtual_paths_in_command(
+                normalized_command, self.home,
+            )
+            if virtual_subs:
+                normalized_command = remapped_command
+                self.log_event(
+                    "virtual_path_remap",
+                    tool=shell_tool_name,
+                    substitutions=[
+                        {"from": src, "to": dst} for src, dst in virtual_subs
+                    ],
+                )
 
             if async_mode:
                 argv = _shell_command_for_platform(normalized_command)

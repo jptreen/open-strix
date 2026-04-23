@@ -44,6 +44,7 @@ virtual paths the agent currently sees.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from .builtin_skills import BUILTIN_HOME_DIRNAME
@@ -106,3 +107,81 @@ def resolve_virtual_path(path: str, home: Path) -> Path:
             remapped = home / path.lstrip("/")
             return remapped.expanduser().resolve()
     return Path(path).expanduser().resolve()
+
+
+def _token_has_virtual_prefix(token: str) -> str | None:
+    """Return the virtual root matched in ``token`` if it starts with a
+    virtual skill prefix at a path-segment boundary; else ``None``.
+    """
+    for virtual_root in (_USER_SKILLS_VIRTUAL_ROOT, _BUILTIN_SKILLS_VIRTUAL_ROOT):
+        if token == virtual_root or token.startswith(virtual_root + "/"):
+            return virtual_root
+    return None
+
+
+def remap_virtual_paths_in_command(
+    command: str,
+    home: Path,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Rewrite virtual skill-root tokens in a shell command.
+
+    Bash commands routinely contain ``/skills/...`` as arguments when
+    the agent copies paths out of its skills-discovery prompt. Without
+    remapping, ``ls /skills/adhd-research/`` fails with "No such file
+    or directory" on the host.
+
+    Uses ``shlex.split`` to tokenize the command the way the shell
+    does: quoted strings become single tokens, whitespace splits tokens,
+    escapes are honoured. Only whole tokens that start with a virtual
+    root (``/skills`` or ``/.open_strix_builtin_skills``) at a path
+    boundary get rewritten. Tokens whose content happens to include
+    ``/skills/`` but which aren't rooted there (``/etc/skills/foo``,
+    ``--grep=/skills/log``, ``'the /skills/ namespace'``) are left
+    alone.
+
+    If ``shlex.split`` can't parse the command (unbalanced quotes,
+    for instance), the original command is returned unchanged — better
+    to let the shell give its own error than to mangle a command we
+    don't understand.
+
+    Returns the rewritten command (via ``shlex.join``) and a list of
+    ``(original_token, remapped_token)`` substitutions performed —
+    useful for logging.
+    """
+    # Use posix=False + whitespace_split=True so tokens retain their
+    # surrounding quote characters. This lets us distinguish ``'/skills/'``
+    # (a quoted literal string — a grep pattern or similar, leave alone)
+    # from ``/skills/...`` (a bare path argument — remap). shlex.split
+    # with posix=True strips the quotes and loses this distinction.
+    lexer = shlex.shlex(command, posix=False)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return command, []
+
+    substitutions: list[tuple[str, str]] = []
+    remapped_tokens: list[str] = []
+    changed = False
+    for token in tokens:
+        # A quoted token starts with one of `'` / `"` — those are
+        # literals the agent explicitly marked as strings. Don't remap.
+        if token and token[0] in ("'", '"'):
+            remapped_tokens.append(token)
+            continue
+        if _token_has_virtual_prefix(token) is not None:
+            real = str((home / token.lstrip("/")).expanduser().resolve())
+            substitutions.append((token, real))
+            remapped_tokens.append(real)
+            changed = True
+        else:
+            remapped_tokens.append(token)
+
+    if not changed:
+        # No substantive change — return the original command verbatim
+        # so downstream logging / display shows what the agent wrote.
+        return command, []
+
+    # Re-join with single spaces. posix=False tokens already include
+    # whatever quotes were in the source, so no extra quoting needed.
+    return " ".join(remapped_tokens), substitutions

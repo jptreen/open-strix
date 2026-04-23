@@ -14,7 +14,10 @@ from pathlib import Path
 import pytest
 
 from open_strix.builtin_skills import BUILTIN_HOME_DIRNAME
-from open_strix.virtual_paths import resolve_virtual_path
+from open_strix.virtual_paths import (
+    remap_virtual_paths_in_command,
+    resolve_virtual_path,
+)
 
 
 @pytest.fixture
@@ -125,3 +128,102 @@ def test_expanduser_is_honoured(home: Path, monkeypatch, tmp_path: Path):
     monkeypatch.setenv("HOME", str(fake_home))
     resolved = resolve_virtual_path("~/file.txt", home)
     assert resolved == fake_home / "file.txt"
+
+
+# --- remap_virtual_paths_in_command (bash tool) -------------------------
+
+
+def test_bash_remap_ls_skill_dir(home: Path):
+    out, subs = remap_virtual_paths_in_command("ls /skills/adhd-research/", home)
+    assert str(home / "skills" / "adhd-research") in out
+    # shlex tokenization strips the trailing slash; subs records the
+    # token as-parsed, which is what the shell would have seen.
+    assert subs and subs[0][0] in ("/skills/adhd-research", "/skills/adhd-research/")
+
+
+def test_bash_remap_cat_skill_file(home: Path):
+    out, subs = remap_virtual_paths_in_command(
+        "cat /skills/adhd-research/SKILL.md", home,
+    )
+    assert str(home / "skills" / "adhd-research" / "SKILL.md") in out
+    assert len(subs) == 1
+
+
+def test_bash_remap_multiple_paths_in_one_command(home: Path):
+    out, subs = remap_virtual_paths_in_command(
+        "diff /skills/foo/SKILL.md /skills/bar/SKILL.md", home,
+    )
+    assert str(home / "skills" / "foo" / "SKILL.md") in out
+    assert str(home / "skills" / "bar" / "SKILL.md") in out
+    assert len(subs) == 2
+
+
+def test_bash_remap_preserves_quoted_string_contents(home: Path):
+    # Paths inside quoted strings should NOT be remapped — conservative
+    # boundary ensures the agent can still echo/grep literal /skills/
+    # references.
+    out, subs = remap_virtual_paths_in_command(
+        "echo 'the /skills/ namespace is virtual'", home,
+    )
+    assert out == "echo 'the /skills/ namespace is virtual'"
+    assert subs == []
+
+
+def test_bash_remap_preserves_grep_pattern(home: Path):
+    # Same as above but for a grep pattern delimited by quotes.
+    out, subs = remap_virtual_paths_in_command(
+        "grep '/skills/' logs/events.jsonl", home,
+    )
+    assert out == "grep '/skills/' logs/events.jsonl"
+    assert subs == []
+
+
+def test_bash_remap_no_virtual_path_is_noop(home: Path):
+    cmd = "git status -s"
+    out, subs = remap_virtual_paths_in_command(cmd, home)
+    assert out == cmd
+    assert subs == []
+
+
+def test_bash_remap_real_path_passthrough(home: Path):
+    # Real absolute paths should not be remapped — only virtual roots
+    # get rewritten.
+    cmd = f"ls {home}/skills/adhd-research/"
+    out, subs = remap_virtual_paths_in_command(cmd, home)
+    assert out == cmd
+    assert subs == []
+
+
+def test_bash_remap_builtin_skill_path(home: Path):
+    out, subs = remap_virtual_paths_in_command(
+        f"cat /{BUILTIN_HOME_DIRNAME}/memory/SKILL.md", home,
+    )
+    assert str(home / BUILTIN_HOME_DIRNAME / "memory" / "SKILL.md") in out
+    assert len(subs) == 1
+
+
+def test_bash_remap_start_of_string(home: Path):
+    # A command that begins with a virtual path (no leading whitespace)
+    # should still be remapped.
+    out, subs = remap_virtual_paths_in_command(
+        "/skills/foo/run.sh arg1", home,
+    )
+    assert out.startswith(str(home / "skills" / "foo" / "run.sh"))
+    assert len(subs) == 1
+
+
+def test_bash_remap_after_pipe(home: Path):
+    out, subs = remap_virtual_paths_in_command(
+        "cat file | grep foo > /skills/out/log.txt", home,
+    )
+    assert str(home / "skills" / "out" / "log.txt") in out
+    assert len(subs) == 1
+
+
+def test_bash_remap_prefix_collision(home: Path):
+    # Don't remap ``/skills-archive/...`` — it's not under the virtual
+    # root. Token boundary after the root (``/`` or end) is required.
+    cmd = "ls /skills-archive/old.md"
+    out, subs = remap_virtual_paths_in_command(cmd, home)
+    assert out == cmd
+    assert subs == []
