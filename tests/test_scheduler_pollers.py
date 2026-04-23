@@ -35,12 +35,42 @@ class FakeApp(SchedulerMixin):
         self.layout = FakeLayout(home)
         self.events: list[dict] = []
         self.enqueued: list = []
+        # Captures _remember_message calls made by the scheduler (e.g. the
+        # history_backfill path). Returns True by default so the "recorded"
+        # counter in poller_history_backfill logs reflects full acceptance.
+        self.remembered: list[dict] = []
 
     def log_event(self, event_type: str, **payload) -> None:
         self.events.append({"type": event_type, **payload})
 
     async def enqueue_event(self, event) -> None:
         self.enqueued.append(event)
+
+    def _remember_message(
+        self,
+        *,
+        channel_id: str,
+        author: str,
+        content: str,
+        attachment_names: list[str],
+        message_id: str | None = None,
+        is_bot: bool = False,
+        source: str = "discord",
+        timestamp: str | None = None,
+        reactions: list[str] | None = None,
+        persist: bool = True,
+    ) -> bool:
+        self.remembered.append({
+            "channel_id": channel_id,
+            "author": author,
+            "content": content,
+            "attachment_names": attachment_names,
+            "message_id": message_id,
+            "is_bot": is_bot,
+            "source": source,
+            "timestamp": timestamp,
+        })
+        return True
 
 
 @pytest.fixture
@@ -779,3 +809,206 @@ class TestPollersJsonRoutingDefaults:
         # Per-event value wins so conversational pollers can still route
         # dynamically even when entry-level defaults are configured.
         assert app.enqueued[0].channel_id == "!event:matrix.org"
+
+
+class TestPollerHistoryBackfill:
+    """tony-koh: poller emits 'history_backfill' records that seed
+    message_history_all without firing an agent turn."""
+
+    @pytest.mark.asyncio
+    async def test_backfill_records_to_history_without_enqueue(
+        self, tmp_home: Path
+    ) -> None:
+        """A history_backfill line calls _remember_message for each record
+        and does NOT enqueue an AgentEvent."""
+        skill_dir = tmp_home / "skills" / "backfiller"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "type": "history_backfill",\n'
+            '    "channel_id": "dm:1,2",\n'
+            '    "channel_type": "zulip",\n'
+            '    "records": [\n'
+            '        {"sender": "Alice", "content": "hello", "event_id": "100",\n'
+            '         "timestamp": "2026-04-23T15:00:00Z"},\n'
+            '        {"sender": "Bob", "content": "hi there", "event_id": "101",\n'
+            '         "timestamp": "2026-04-23T15:00:30Z", "is_bot": True}\n'
+            '    ]\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="backfill-test",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        # Backfill does not create agent turns.
+        assert app.enqueued == []
+        # Both records landed in message_history via _remember_message.
+        assert len(app.remembered) == 2
+        assert app.remembered[0]["channel_id"] == "dm:1,2"
+        assert app.remembered[0]["author"] == "Alice"
+        assert app.remembered[0]["content"] == "hello"
+        assert app.remembered[0]["source"] == "zulip"
+        assert app.remembered[0]["message_id"] == "100"
+        assert app.remembered[0]["timestamp"] == "2026-04-23T15:00:00Z"
+        assert app.remembered[0]["is_bot"] is False
+        assert app.remembered[1]["author"] == "Bob"
+        assert app.remembered[1]["is_bot"] is True
+        # Observability: poller_history_backfill event emitted.
+        backfill_logs = [e for e in app.events if e["type"] == "poller_history_backfill"]
+        assert len(backfill_logs) == 1
+        assert backfill_logs[0]["channel_id"] == "dm:1,2"
+        assert backfill_logs[0]["records_seen"] == 2
+        assert backfill_logs[0]["records_recorded"] == 2
+
+    @pytest.mark.asyncio
+    async def test_backfill_then_event_processed_in_order(
+        self, tmp_home: Path
+    ) -> None:
+        """Backfill line emitted before a normal event line results in
+        records recorded BEFORE the AgentEvent enqueues — so the agent's
+        turn sees history in its recent_messages context."""
+        skill_dir = tmp_home / "skills" / "mixed"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            # Backfill line first.
+            'print(json.dumps({\n'
+            '    "type": "history_backfill",\n'
+            '    "channel_id": "dm:1,2",\n'
+            '    "channel_type": "zulip",\n'
+            '    "records": [\n'
+            '        {"sender": "Alice", "content": "earlier msg",\n'
+            '         "event_id": "100"}\n'
+            '    ]\n'
+            '}))\n'
+            # Then the current-message event line.
+            'print(json.dumps({\n'
+            '    "poller": "zulip", "prompt": "current msg body",\n'
+            '    "channel_id": "dm:1,2", "channel_type": "zulip",\n'
+            '    "sender": "Alice", "event_id": "101"\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="mixed-test",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        # Current-message event fires exactly one agent turn.
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].prompt == "current msg body"
+        # Backfill ran before the enqueue (one record remembered).
+        assert len(app.remembered) == 1
+        assert app.remembered[0]["content"] == "earlier msg"
+
+    @pytest.mark.asyncio
+    async def test_backfill_uses_poller_channel_type_default_when_missing(
+        self, tmp_home: Path
+    ) -> None:
+        """channel_type absent in the backfill JSON falls back to the
+        pollers.json entry-level default (same pattern as normal events)."""
+        skill_dir = tmp_home / "skills" / "bf_default"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "type": "history_backfill",\n'
+            '    "channel_id": "dm:1,2",\n'
+            '    "records": [{"sender": "X", "content": "y", "event_id": "9"}]\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="bf-default",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+            channel_type="zulip",
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.remembered) == 1
+        assert app.remembered[0]["source"] == "zulip"
+
+    @pytest.mark.asyncio
+    async def test_backfill_missing_channel_id_logs_and_skips(
+        self, tmp_home: Path
+    ) -> None:
+        """A malformed backfill line (no channel_id, no fallback) is
+        logged as poller_backfill_invalid and does not raise."""
+        skill_dir = tmp_home / "skills" / "bf_bad"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "type": "history_backfill",\n'
+            '    "records": [{"sender": "X", "content": "y", "event_id": "9"}]\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="bf-bad",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert app.enqueued == []
+        assert app.remembered == []
+        invalid_logs = [e for e in app.events if e["type"] == "poller_backfill_invalid"]
+        assert len(invalid_logs) == 1
+
+    @pytest.mark.asyncio
+    async def test_backfill_empty_content_record_skipped(
+        self, tmp_home: Path
+    ) -> None:
+        """Records with empty/whitespace content are skipped silently —
+        defensive against upstream API oddities."""
+        skill_dir = tmp_home / "skills" / "bf_empty"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "type": "history_backfill",\n'
+            '    "channel_id": "c1",\n'
+            '    "channel_type": "zulip",\n'
+            '    "records": [\n'
+            '        {"sender": "A", "content": "", "event_id": "1"},\n'
+            '        {"sender": "B", "content": "real", "event_id": "2"}\n'
+            '    ]\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="bf-empty",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.remembered) == 1
+        assert app.remembered[0]["content"] == "real"
+        backfill_logs = [e for e in app.events if e["type"] == "poller_history_backfill"]
+        assert backfill_logs[0]["records_seen"] == 2
+        assert backfill_logs[0]["records_recorded"] == 1

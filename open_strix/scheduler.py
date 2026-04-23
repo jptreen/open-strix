@@ -394,6 +394,73 @@ class SchedulerMixin:
             if not isinstance(parsed, dict):
                 continue
 
+            # Backfill batch: poller seeds prior channel history into
+            # message_history_all so the agent has context for a conversation
+            # it was offline for, without firing a turn on each historical
+            # message. Discord's _refresh_channel_history_from_discord does
+            # the same thing inside the discord.py client path; this is the
+            # poller-side equivalent. Shape:
+            #   {"type": "history_backfill",
+            #    "channel_id": "...",
+            #    "channel_type": "...",        # optional — falls back to poller default
+            #    "records": [
+            #       {"sender": ..., "content": ...,
+            #        "event_id": ..., "timestamp": ..., "is_bot": ...,
+            #        "attachment_names": [...]}]}
+            if parsed.get("type") == "history_backfill":
+                bf_channel_id = parsed.get("channel_id")
+                if bf_channel_id is not None:
+                    bf_channel_id = str(bf_channel_id).strip() or None
+                if bf_channel_id is None:
+                    bf_channel_id = poller.channel_id
+                bf_channel_type = parsed.get("channel_type")
+                if bf_channel_type is not None:
+                    bf_channel_type = str(bf_channel_type).strip() or None
+                if bf_channel_type is None:
+                    bf_channel_type = poller.channel_type
+                records = parsed.get("records") or []
+                if not bf_channel_id or not isinstance(records, list):
+                    self.log_event(
+                        "poller_backfill_invalid",
+                        name=poller.name,
+                        channel_id=bf_channel_id,
+                        record_count=len(records) if isinstance(records, list) else 0,
+                    )
+                    continue
+                recorded = 0
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    rec_content = str(rec.get("content") or "").strip()
+                    if not rec_content:
+                        continue
+                    rec_message_id = str(rec.get("event_id") or rec.get("source_id") or "").strip() or None
+                    rec_timestamp = str(rec.get("timestamp") or "").strip() or None
+                    rec_attachments = rec.get("attachment_names") or []
+                    if not isinstance(rec_attachments, list):
+                        rec_attachments = []
+                    added = self._remember_message(
+                        channel_id=bf_channel_id,
+                        author=str(rec.get("sender") or rec.get("author") or "unknown"),
+                        content=rec_content,
+                        attachment_names=[str(a) for a in rec_attachments],
+                        message_id=rec_message_id,
+                        is_bot=bool(rec.get("is_bot")),
+                        source=bf_channel_type or "poller",
+                        timestamp=rec_timestamp,
+                    )
+                    if added:
+                        recorded += 1
+                self.log_event(
+                    "poller_history_backfill",
+                    name=poller.name,
+                    channel_id=bf_channel_id,
+                    channel_type=bf_channel_type,
+                    records_seen=len(records),
+                    records_recorded=recorded,
+                )
+                continue
+
             prompt = str(parsed.get("prompt", "")).strip()
             if not prompt:
                 continue
