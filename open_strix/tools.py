@@ -626,8 +626,24 @@ class ToolsMixin:
             command: str,
             timeout_seconds: int = 120,
             max_output_chars: int = SHELL_OUTPUT_LIMIT_CHARS,
+            async_mode: bool = False,
         ) -> str:
-            """Run an arbitrary shell command on this machine."""
+            """Run an arbitrary shell command on this machine.
+
+            By default this blocks until the command finishes, subject to
+            timeout_seconds. For long-running commands (builds, deployments,
+            data processing, agent jobs like acpx/codex exec), set
+            async_mode=True. The harness then spawns the command in the
+            background and returns immediately with a job_id and PID.
+            While the job runs you can keep working on other things.
+
+            Check on async jobs with:
+              - shell_jobs_list() — all registered jobs (running + recently finished)
+              - shell_job_output(job_id) — tail stdout/stderr + current status
+
+            Kill an async job by running `kill <PID>` (or `kill -9 <PID>`) in
+            another shell call. Pick the signal level yourself.
+            """
             normalized_command = command.strip()
             if not normalized_command:
                 return "command is required."
@@ -635,6 +651,38 @@ class ToolsMixin:
                 return "timeout_seconds must be > 0."
             if max_output_chars <= 0:
                 return "max_output_chars must be > 0."
+
+            if async_mode:
+                argv = _shell_command_for_platform(normalized_command)
+                try:
+                    job = await asyncio.to_thread(
+                        self.shell_jobs.spawn,
+                        normalized_command,
+                        argv=argv,
+                    )
+                except FileNotFoundError:
+                    self.log_event(
+                        "tool_call_error",
+                        tool=shell_tool_name,
+                        error_type="missing_shell_binary",
+                        async_mode=True,
+                    )
+                    return f"{shell_tool_name} is not available on this machine."
+                self.log_event(
+                    "tool_call",
+                    tool=shell_tool_name,
+                    async_mode=True,
+                    job_id=job.job_id,
+                    pid=job.pid,
+                    command=normalized_command,
+                )
+                return (
+                    f"Spawned async job {job.job_id} (pid {job.pid}).\n"
+                    f"Command: {normalized_command}\n"
+                    f"Status: running. Use shell_jobs_list to see all jobs, "
+                    f"shell_job_output(\"{job.job_id}\") to tail output, "
+                    f"or kill {job.pid} to stop it."
+                )
 
             try:
                 completed = await asyncio.to_thread(
@@ -1463,9 +1511,104 @@ class ToolsMixin:
             self.log_event("withhold_response", reason=reason)
             return "Response withheld — final text will not be auto-sent this turn."
 
+        @tool("shell_jobs_list")
+        async def shell_jobs_list() -> str:
+            """List all async shell jobs (running + recently finished).
+
+            Use this to check on commands you spawned earlier with
+            run_shell_tool(async_mode=True). Shows job_id, pid, status,
+            elapsed time, and seconds since the last live output signal.
+            """
+            jobs = await asyncio.to_thread(self.shell_jobs.all_jobs)
+            if not jobs:
+                self.log_event("tool_call", tool="shell_jobs_list", count=0)
+                return "No async shell jobs registered."
+            lines = [
+                f"{len(jobs)} async shell job(s):",
+                "",
+            ]
+            for job in jobs:
+                snap = job.snapshot()
+                cmd_preview = snap["command"]
+                if len(cmd_preview) > 80:
+                    cmd_preview = cmd_preview[:77] + "..."
+                lines.append(
+                    f"  {snap['job_id']}  pid={snap['pid']}  {snap['status']}  "
+                    f"elapsed={snap['elapsed_seconds']:.1f}s  "
+                    f"last_signal={snap['seconds_since_last_signal']:.1f}s ago"
+                )
+                lines.append(f"    cmd: {cmd_preview}")
+                if snap["exit_code"] is not None:
+                    lines.append(f"    exit_code: {snap['exit_code']}")
+            self.log_event(
+                "tool_call",
+                tool="shell_jobs_list",
+                count=len(jobs),
+            )
+            return "\n".join(lines)
+
+        @tool("shell_job_output")
+        async def shell_job_output(
+            job_id: str,
+            tail_lines: int = 200,
+            stream: str = "both",
+        ) -> str:
+            """Tail stdout/stderr for an async shell job.
+
+            Args:
+                job_id: The j_abc123 identifier returned by run_shell_tool(async_mode=True).
+                tail_lines: Max lines per stream to return (default 200).
+                stream: "stdout", "stderr", or "both".
+            """
+            if stream not in ("stdout", "stderr", "both"):
+                return 'stream must be one of: "stdout", "stderr", "both"'
+            if tail_lines < 0:
+                return "tail_lines must be >= 0."
+
+            result = await asyncio.to_thread(
+                self.shell_jobs.read_output,
+                job_id,
+                tail_lines=tail_lines,
+                stream=stream,
+            )
+            if "error" in result:
+                self.log_event(
+                    "tool_call_error",
+                    tool="shell_job_output",
+                    error_type="unknown_job_id",
+                    job_id=job_id,
+                )
+                return result["error"]
+            self.log_event(
+                "tool_call",
+                tool="shell_job_output",
+                job_id=job_id,
+                status=result["status"],
+            )
+            parts = [
+                f"job_id: {result['job_id']}",
+                f"pid: {result['pid']}",
+                f"status: {result['status']}",
+                f"elapsed: {result['elapsed_seconds']:.1f}s",
+                f"last_signal: {result['seconds_since_last_signal']:.1f}s ago",
+            ]
+            if result["exit_code"] is not None:
+                parts.append(f"exit_code: {result['exit_code']}")
+            parts.append(f"command: {result['command']}")
+            parts.append("")
+            if stream in ("stdout", "both"):
+                parts.append("--- stdout tail ---")
+                parts.append(result["stdout_tail"] or "(empty)")
+            if stream in ("stderr", "both"):
+                parts.append("--- stderr tail ---")
+                parts.append(result["stderr_tail"] or "(empty)")
+            return "\n".join(parts)
+
         send_message.handle_tool_error = True
         list_messages.handle_tool_error = True
         run_shell_tool.handle_tool_error = True
+        shell_jobs_list.handle_tool_error = True
+        shell_job_output.handle_tool_error = True
         fetch_url.handle_tool_error = True
 
         tools: list[Any] = [
@@ -1479,6 +1622,8 @@ class ToolsMixin:
             glob_files,
             edit_file,
             write_file,
+            shell_jobs_list,
+            shell_job_output,
             fetch_url,
             journal,
             list_memory_blocks,
