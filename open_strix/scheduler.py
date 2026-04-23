@@ -493,17 +493,44 @@ class SchedulerMixin:
             if source_id is not None:
                 source_id = str(source_id).strip() or None
 
+            # Richer channel metadata — matches Discord's
+            # _describe_channel_context output. Missing fields render as
+            # "unknown" via render_channel_context, which is fine.
+            channel_name = parsed.get("channel_name")
+            if channel_name is not None:
+                channel_name = str(channel_name).strip() or None
+            channel_conversation_type = parsed.get("channel_conversation_type")
+            if channel_conversation_type is not None:
+                channel_conversation_type = str(channel_conversation_type).strip() or None
+            channel_visibility = parsed.get("channel_visibility")
+            if channel_visibility is not None:
+                channel_visibility = str(channel_visibility).strip() or None
+
+            # is_bot and timestamp (tony-94l, tony-833). is_bot defaults
+            # to False so existing pollers that don't emit it keep their
+            # prior behavior. timestamp is None when absent — consumers
+            # fall back to ingestion time.
+            is_bot = bool(parsed.get("is_bot", False))
+            timestamp = parsed.get("timestamp")
+            if timestamp is not None:
+                timestamp = str(timestamp).strip() or None
+
             await self.enqueue_event(
                 AgentEvent(
                     event_type="poller",
                     prompt=prompt,
                     channel_id=channel_id,
                     channel_type=channel_type,
+                    channel_name=channel_name,
+                    channel_conversation_type=channel_conversation_type,
+                    channel_visibility=channel_visibility,
                     scheduler_name=poller.name,
                     dedupe_key=f"poller:{poller.name}:{run_id}:{event_count}",
                     source_platform=source_platform,
                     author=author,
                     source_id=source_id,
+                    is_bot=is_bot,
+                    timestamp=timestamp,
                 ),
             )
             event_count += 1

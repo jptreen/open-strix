@@ -994,8 +994,9 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 content=event.prompt,
                 attachment_names=list(event.attachment_names),
                 message_id=event.source_id,
-                is_bot=False,
+                is_bot=event.is_bot,
                 source=event.channel_type,
+                timestamp=event.timestamp,
             )
 
         # Turn-time instrumentation (upstream #91): baseline measurement

@@ -811,6 +811,110 @@ class TestPollersJsonRoutingDefaults:
         assert app.enqueued[0].channel_id == "!event:matrix.org"
 
 
+class TestPollerEventRichFields:
+    """tony-833 / tony-94l / tony-8cl: poller events may emit is_bot,
+    timestamp, channel_name, channel_conversation_type, channel_visibility.
+    Scheduler plumbs them through to AgentEvent for _process_event +
+    render_turn_prompt / render_channel_context consumption."""
+
+    @pytest.mark.asyncio
+    async def test_poller_emits_rich_fields_into_agent_event(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "rich"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "poller": "zulip", "prompt": "Hey",\n'
+            '    "channel_id": "dm:1,2", "channel_type": "zulip",\n'
+            '    "sender": "Alice", "event_id": "500",\n'
+            '    "is_bot": False,\n'
+            '    "timestamp": "2026-04-23T16:00:00+00:00",\n'
+            '    "channel_name": "DM with Alice",\n'
+            '    "channel_conversation_type": "dm",\n'
+            '    "channel_visibility": "private"\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="rich-zulip",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        ev = app.enqueued[0]
+        assert ev.is_bot is False
+        assert ev.timestamp == "2026-04-23T16:00:00+00:00"
+        assert ev.channel_name == "DM with Alice"
+        assert ev.channel_conversation_type == "dm"
+        assert ev.channel_visibility == "private"
+
+    @pytest.mark.asyncio
+    async def test_poller_is_bot_true_plumbs_through(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "isbot"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({\n'
+            '    "poller": "zulip", "prompt": "beep boop",\n'
+            '    "channel_id": "1234/general", "channel_type": "zulip",\n'
+            '    "sender": "OtherBot", "event_id": "501", "is_bot": True\n'
+            '}))\n'
+        )
+        poller = PollerConfig(
+            name="isbot-zulip",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert app.enqueued[0].is_bot is True
+
+    @pytest.mark.asyncio
+    async def test_poller_missing_rich_fields_defaults(
+        self, tmp_home: Path
+    ) -> None:
+        """Old-style pollers that don't emit the new fields still work —
+        is_bot defaults False, other fields default None."""
+        skill_dir = tmp_home / "skills" / "bare"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "poller.py").write_text(
+            'import json\n'
+            'print(json.dumps({"poller": "x", "prompt": "hi"}))\n'
+        )
+        poller = PollerConfig(
+            name="bare-poller",
+            command="python poller.py",
+            cron="* * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        ev = app.enqueued[0]
+        assert ev.is_bot is False
+        assert ev.timestamp is None
+        assert ev.channel_name is None
+        assert ev.channel_conversation_type is None
+        assert ev.channel_visibility is None
+
+
 class TestPollerHistoryBackfill:
     """tony-koh: poller emits 'history_backfill' records that seed
     message_history_all without firing an agent turn."""
