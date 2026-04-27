@@ -11,6 +11,11 @@ from aiohttp import web
 from aiohttp.web_request import FileField
 
 from .models import AgentEvent
+from .ops_dashboard import (
+    build_dashboard_payload,
+    parse_days_param,
+    render_dashboard_html,
+)
 from .shell_jobs import (
     normalize_shell_job_scope,
     normalize_shell_job_stream,
@@ -307,12 +312,31 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
       .header {{
         padding: 1rem 1.25rem 0.9rem;
         border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
       }}
 
       .title {{
         margin: 0;
         font-size: clamp(1.2rem, 2vw, 1.65rem);
         line-height: 1.1;
+      }}
+
+      .header-links {{
+        display: flex;
+        gap: 0.9rem;
+        font-size: 0.85rem;
+      }}
+
+      .header-links a {{
+        color: var(--accent);
+        text-decoration: none;
+      }}
+
+      .header-links a:hover {{
+        text-decoration: underline;
       }}
 
       .status-row {{
@@ -750,6 +774,9 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
     <main class="shell">
       <header class="header">
         <h1 class="title">{agent_name}</h1>
+        <nav class="header-links">
+          <a href="/ops" title="Live ops dashboard">Ops</a>
+        </nav>
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
@@ -1616,6 +1643,21 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
             return web.json_response(data, status=404)
         return web.json_response(data)
 
+    async def ops_dashboard(request: web.Request) -> web.Response:
+        try:
+            days = parse_days_param(request.query.get("days"))
+        except ValueError as exc:
+            return web.Response(text=str(exc), status=400)
+        stats = build_dashboard_payload(strix, days)
+        return web.Response(text=render_dashboard_html(stats), content_type="text/html")
+
+    async def ops_dashboard_json(request: web.Request) -> web.Response:
+        try:
+            days = parse_days_param(request.query.get("days"))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response(build_dashboard_payload(strix, days))
+
     app.router.add_get("/", index)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/messages", list_messages)
@@ -1623,6 +1665,8 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
     app.router.add_get("/api/shell-jobs", list_shell_jobs)
     app.router.add_get("/api/shell-jobs/{job_id}", shell_job_detail)
     app.router.add_get("/files/{path:.*}", serve_file)
+    app.router.add_get("/ops", ops_dashboard)
+    app.router.add_get("/api/ops", ops_dashboard_json)
     return app
 
 
