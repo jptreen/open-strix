@@ -172,6 +172,20 @@ class SchedulerMixin:
                         entry=entry,
                     )
                     continue
+                # tony-cs4: honour ``"disabled": true`` so a paused poller
+                # really pauses. Strict ``is True`` so a stray string value
+                # like ``"disabled": "false"`` doesn't accidentally disable
+                # — must be a JSON boolean. Non-fatal: log and skip; the
+                # entry stays in pollers.json for easy re-enable.
+                if entry.get("disabled") is True:
+                    reason = entry.get("disabled_reason")
+                    self.log_event(
+                        "poller_disabled",
+                        path=str(pollers_file),
+                        name=name,
+                        reason=str(reason) if reason is not None else None,
+                    )
+                    continue
                 env = entry.get("env", {})
                 if not isinstance(env, dict):
                     env = {}

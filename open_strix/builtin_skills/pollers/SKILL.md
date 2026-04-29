@@ -97,6 +97,8 @@ if __name__ == "__main__":
 | `command` | yes | Shell command, relative to the skill directory. |
 | `cron` | yes | Cron expression (5-field, UTC). |
 | `env` | no | Additional environment variables for the script. |
+| `disabled` | no | Boolean. When `true`, the scheduler logs a `poller_disabled` event and skips registration — the poller never fires until the flag is removed or set to `false`. Use this to pause a poller without losing its configuration; pair with `disabled_reason` for the explanation. |
+| `disabled_reason` | no | Free-form string explaining why the poller is paused. Logged with `poller_disabled` for operator visibility. |
 
 ### 3. Register the pollers
 

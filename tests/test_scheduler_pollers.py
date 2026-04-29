@@ -197,6 +197,120 @@ class TestDiscoverPollers:
         assert len(pollers) == 1
         assert pollers[0].env == {}
 
+    # --- tony-cs4: disabled: true honoured at the scheduler ----------------
+
+    def test_disabled_true_skips_registration(self, tmp_home: Path) -> None:
+        """A poller marked ``"disabled": true`` is not added to the schedule
+        and emits a ``poller_disabled`` event with name + reason."""
+        skill_dir = tmp_home / "skills" / "retired-research"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "retired-research",
+                "command": "python poller.py",
+                "cron": "0 */4 * * *",
+                "disabled": True,
+                "disabled_reason": "Project complete; user requested pause.",
+            }
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert pollers == []
+        disabled_events = [e for e in app.events if e["type"] == "poller_disabled"]
+        assert len(disabled_events) == 1
+        assert disabled_events[0]["name"] == "retired-research"
+        assert disabled_events[0]["reason"] == "Project complete; user requested pause."
+
+    def test_disabled_false_registers_normally(self, tmp_home: Path) -> None:
+        """``"disabled": false`` is a no-op — the poller registers as usual."""
+        skill_dir = tmp_home / "skills" / "active"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "active",
+                "command": "python poller.py",
+                "cron": "*/5 * * * *",
+                "disabled": False,
+            }
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert len(pollers) == 1
+        assert pollers[0].name == "active"
+        # No poller_disabled events for an actively-registered poller.
+        assert not [e for e in app.events if e["type"] == "poller_disabled"]
+
+    def test_disabled_string_does_not_disable(self, tmp_home: Path) -> None:
+        """Strict ``is True`` check: ``"disabled": "true"`` (string) is not
+        a boolean and does NOT disable. Avoids accidental disables from
+        loose-typed configs and forces operators to fix obvious mistakes
+        rather than silently honouring them.
+        """
+        skill_dir = tmp_home / "skills" / "stringy"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "stringy",
+                "command": "python poller.py",
+                "cron": "*/5 * * * *",
+                "disabled": "true",  # NOT a boolean — should NOT disable
+            }
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert len(pollers) == 1
+        assert pollers[0].name == "stringy"
+
+    def test_disabled_without_reason(self, tmp_home: Path) -> None:
+        """``disabled_reason`` is optional; the event still fires."""
+        skill_dir = tmp_home / "skills" / "noreason"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "noreason",
+                "command": "python poller.py",
+                "cron": "*/5 * * * *",
+                "disabled": True,
+            }
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert pollers == []
+        disabled_events = [e for e in app.events if e["type"] == "poller_disabled"]
+        assert len(disabled_events) == 1
+        assert disabled_events[0]["reason"] is None
+
+    def test_disabled_mixed_with_active_only_skips_disabled(self, tmp_home: Path) -> None:
+        """In a pollers.json with both disabled and active entries, only
+        the disabled one is skipped."""
+        skill_dir = tmp_home / "skills" / "mixed"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {
+                "name": "paused",
+                "command": "python a.py",
+                "cron": "0 */4 * * *",
+                "disabled": True,
+                "disabled_reason": "paused",
+            },
+            {
+                "name": "active",
+                "command": "python b.py",
+                "cron": "*/5 * * * *",
+            },
+        ]}))
+
+        app = FakeApp(tmp_home)
+        pollers = app._discover_pollers()
+        assert [p.name for p in pollers] == ["active"]
+        disabled_events = [e for e in app.events if e["type"] == "poller_disabled"]
+        assert len(disabled_events) == 1
+        assert disabled_events[0]["name"] == "paused"
+
 
 class TestOnPollerFire:
     @pytest.mark.asyncio
