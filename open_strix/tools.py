@@ -20,7 +20,11 @@ from langchain_core.tools import ToolException, tool
 
 from .discord import ERROR_REACTION_EMOJI, WARNING_REACTION_EMOJI
 from .scheduler import SchedulerJob, _SCHEDULER_LOCK
-from .virtual_paths import remap_virtual_paths_in_command, resolve_virtual_path
+from .virtual_paths import (
+    remap_virtual_paths_in_command,
+    resolve_virtual_path,
+    split_absolute_pattern,
+)
 
 UTC = timezone.utc
 FETCH_CHUNK_SIZE_BYTES = 64 * 1024
@@ -844,17 +848,49 @@ class ToolsMixin:
             """Find files matching a glob pattern.
 
             Args:
-                pattern: Glob pattern (e.g. '**/*.py', 'state/*.md').
-                path: Directory to search in. Defaults to current directory.
+                pattern: Glob pattern. Can be relative (``**/*.py``,
+                  ``state/*.md``) or absolute (``/skills/**/*.md``).
+                  Absolute patterns are split at the first metacharacter
+                  and re-rooted so they work with Python 3.12+ pathlib.
+                path: Directory to search in. Used only when ``pattern``
+                  is relative. Defaults to current directory.
             """
-            # tony-ugg: remap virtual skill prefixes to real host paths.
-            base = resolve_virtual_path(path, self.home)
+            # tony-17r: log the call BEFORE invoking glob so a crash
+            # leaves a breadcrumb. Previously the tool_call event was
+            # emitted only on success, so NotImplementedError on
+            # absolute patterns disappeared without a trace.
+            self.log_event(
+                "tool_call",
+                tool="glob",
+                pattern=pattern,
+                path=path,
+            )
+
+            # tony-17r: handle absolute patterns the agent may pass
+            # (e.g. '/skills/**/*.md'). Python 3.12+ rejects absolute
+            # patterns in Path.glob() with NotImplementedError. Split
+            # off the literal prefix as the new base, virtual-remap it,
+            # and use the rest as the (relative) pattern.
+            try:
+                split = split_absolute_pattern(pattern, self.home)
+            except ValueError as exc:
+                return f"Invalid glob pattern: {exc}"
+            if split is not None:
+                base, pattern = split
+            else:
+                # tony-ugg: remap virtual skill prefixes in `path`.
+                base = resolve_virtual_path(path, self.home)
+
             if not base.is_dir():
                 return f"Not a directory: {base}"
 
             try:
                 matches = sorted(base.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-            except OSError as exc:
+            except (OSError, NotImplementedError) as exc:
+                # NotImplementedError is a backstop —
+                # split_absolute_pattern should have re-shaped any
+                # absolute pattern by now. Defending against future
+                # pathlib changes that might reject other patterns.
                 return f"Error during glob: {exc}"
 
             # Cap output
@@ -863,7 +899,7 @@ class ToolsMixin:
             suffix = f"\n... and {len(matches) - 200} more" if len(matches) > 200 else ""
 
             self.log_event(
-                "tool_call",
+                "glob_complete",
                 tool="glob",
                 pattern=pattern,
                 path=str(base),

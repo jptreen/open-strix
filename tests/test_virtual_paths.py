@@ -17,6 +17,7 @@ from open_strix.builtin_skills import BUILTIN_HOME_DIRNAME
 from open_strix.virtual_paths import (
     remap_virtual_paths_in_command,
     resolve_virtual_path,
+    split_absolute_pattern,
 )
 
 
@@ -227,3 +228,114 @@ def test_bash_remap_prefix_collision(home: Path):
     out, subs = remap_virtual_paths_in_command(cmd, home)
     assert out == cmd
     assert subs == []
+
+
+# --- split_absolute_pattern (tony-17r) ----------------------------------
+
+def test_split_pattern_relative_returns_none(home: Path):
+    """Relative patterns are the caller's responsibility — no split."""
+    assert split_absolute_pattern("**/*.py", home) is None
+    assert split_absolute_pattern("state/*.md", home) is None
+    assert split_absolute_pattern("a/b/c.txt", home) is None
+
+
+def test_split_pattern_virtual_skill_glob(home: Path):
+    """``/skills/**/*.md`` → (home/skills, "**/*.md"). The glob then
+    works under the agent's real skills dir.
+    """
+    base, rel = split_absolute_pattern("/skills/**/*.md", home)
+    assert base == home / "skills"
+    assert rel == "**/*.md"
+
+
+def test_split_pattern_real_absolute_path_glob(home: Path):
+    """Real absolute path with a glob meta — no virtual remap needed,
+    base is the literal directory.
+    """
+    base, rel = split_absolute_pattern(f"{home}/skills/*.md", home)
+    assert base == home / "skills"
+    assert rel == "*.md"
+
+
+def test_split_pattern_literal_absolute_path_no_meta(home: Path):
+    """``/skills/foo/bar.md`` (no glob chars) splits before the leaf so
+    ``base.glob(leaf)`` becomes an exact-match probe.
+    """
+    base, rel = split_absolute_pattern("/skills/adhd-research/SKILL.md", home)
+    assert base == home / "skills" / "adhd-research"
+    assert rel == "SKILL.md"
+    # Smoke-check end-to-end: the resulting glob actually matches.
+    assert list(base.glob(rel)) == [home / "skills" / "adhd-research" / "SKILL.md"]
+
+
+def test_split_pattern_recursive_glob_at_split(home: Path):
+    """A ``**`` segment is itself a meta — it's the split point."""
+    base, rel = split_absolute_pattern("/skills/**", home)
+    assert base == home / "skills"
+    assert rel == "**"
+
+
+def test_split_pattern_builtin_skills_remaps(home: Path):
+    """Builtin-skills virtual root is also remapped."""
+    base, rel = split_absolute_pattern(
+        f"/{BUILTIN_HOME_DIRNAME}/memory/**/*.md",
+        home,
+    )
+    assert base == home / BUILTIN_HOME_DIRNAME / "memory"
+    assert rel == "**/*.md"
+
+
+def test_split_pattern_question_mark_meta(home: Path):
+    """``?`` counts as a metacharacter for the split point."""
+    base, rel = split_absolute_pattern("/skills/foo/log?.txt", home)
+    assert base == home / "skills" / "foo"
+    assert rel == "log?.txt"
+
+
+def test_split_pattern_bracket_meta(home: Path):
+    """``[abc]`` character class counts too."""
+    base, rel = split_absolute_pattern("/skills/file[12].md", home)
+    assert base == home / "skills"
+    assert rel == "file[12].md"
+
+
+def test_split_pattern_root_glob_rejected(home: Path):
+    """``/**`` would scan the whole host filesystem — reject."""
+    with pytest.raises(ValueError, match="filesystem root"):
+        split_absolute_pattern("/**", home)
+
+
+def test_split_pattern_root_with_meta_first_segment_rejected(home: Path):
+    """``/*.py`` is a same-class footgun — reject."""
+    with pytest.raises(ValueError, match="filesystem root"):
+        split_absolute_pattern("/*.py", home)
+
+
+def test_split_pattern_just_root_rejected(home: Path):
+    """``/`` alone has no leaf to glob."""
+    with pytest.raises(ValueError):
+        split_absolute_pattern("/", home)
+
+
+def test_split_pattern_does_not_block_non_virtual_absolute(home: Path, tmp_path: Path):
+    """An absolute path that isn't a virtual prefix is still split — the
+    literal directory becomes ``base``, no remap. Use ``tmp_path`` so
+    the test is cross-platform (``/etc`` is symlinked to ``/private/etc``
+    on macOS, which would make the assertion brittle).
+    """
+    pattern = f"{tmp_path}/*.conf"
+    base, rel = split_absolute_pattern(pattern, home)
+    # No virtual remap: tmp_path stays as itself.
+    assert base == tmp_path.resolve()
+    assert rel == "*.conf"
+
+
+def test_split_pattern_glob_actually_works_after_split(home: Path, tmp_path: Path):
+    """End-to-end: split a pattern, run base.glob(rel), verify Python
+    doesn't raise NotImplementedError. This is the regression test for
+    the tony-17r crash itself.
+    """
+    base, rel = split_absolute_pattern("/skills/**/*.md", home)
+    # Python 3.12+ would have raised here on the original absolute pattern.
+    matches = list(base.glob(rel))
+    assert (home / "skills" / "adhd-research" / "SKILL.md") in matches

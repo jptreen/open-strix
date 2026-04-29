@@ -45,7 +45,7 @@ virtual paths the agent currently sees.
 from __future__ import annotations
 
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .builtin_skills import BUILTIN_HOME_DIRNAME
 
@@ -54,6 +54,11 @@ from .builtin_skills import BUILTIN_HOME_DIRNAME
 # ``/skills`` as the user-skills virtual source.
 _USER_SKILLS_VIRTUAL_ROOT = "/skills"
 _BUILTIN_SKILLS_VIRTUAL_ROOT = f"/{BUILTIN_HOME_DIRNAME}"
+
+# Glob metacharacters supported by ``Path.glob``. Used to find the
+# split point between the literal directory prefix of a pattern and
+# its globbed remainder.
+_GLOB_META_CHARS = frozenset("*?[")
 
 
 def _has_virtual_prefix(path: str, virtual_root: str) -> bool:
@@ -185,3 +190,90 @@ def remap_virtual_paths_in_command(
     # Re-join with single spaces. posix=False tokens already include
     # whatever quotes were in the source, so no extra quoting needed.
     return " ".join(remapped_tokens), substitutions
+
+
+def split_absolute_pattern(
+    pattern: str,
+    home: Path,
+) -> tuple[Path, str] | None:
+    """Split an absolute glob pattern into a (base_dir, relative_pattern) pair.
+
+    Python 3.12+ ``pathlib.Path.glob`` rejects absolute patterns with
+    ``NotImplementedError("Non-relative patterns are unsupported")``.
+    Earlier versions silently accepted them. The agent doesn't know
+    which version it's running against and may pass patterns like
+    ``/skills/**/*.md`` (a natural extension of the virtual-path
+    convention) or ``/home/tony/tony/state/*.md`` (a literal absolute
+    path it discovered via journal/file_discovery).
+
+    This helper reshapes such inputs so a relative-pattern glob will
+    work:
+
+      * Returns ``None`` if ``pattern`` is relative — the caller's
+        own ``path`` argument is authoritative.
+      * Returns ``(base, relative_pattern)`` if ``pattern`` is
+        absolute. ``base`` is virtual-remapped via
+        :func:`resolve_virtual_path` so ``/skills/**/*.md`` is rooted
+        at ``home/skills`` rather than the host filesystem's
+        non-existent ``/skills``.
+
+    Split point: the first path segment containing a glob
+    metacharacter (``*``, ``?``, ``[``). If no segment has a meta,
+    splits before the leaf so the result acts as an exact-match glob
+    (``base.glob("file.md")`` returns the file iff it exists).
+
+    Raises:
+      ValueError: if the literal directory prefix is the filesystem
+        root (e.g. ``"/*"``, ``"/*.py"``). Globbing from ``/`` would
+        scan every mounted volume — never the agent's intent and a
+        prompt-injection concern.
+
+    Examples (assuming ``home = /home/tony/tony``)::
+
+        split_absolute_pattern("/skills/**/*.md", home)
+          → (Path("/home/tony/tony/skills"), "**/*.md")
+
+        split_absolute_pattern("/home/tony/tony/state/*.md", home)
+          → (Path("/home/tony/tony/state"), "*.md")
+
+        split_absolute_pattern("/skills/foo/bar.md", home)  # literal
+          → (Path("/home/tony/tony/skills/foo"), "bar.md")
+
+        split_absolute_pattern("**/*.py", home)
+          → None                                     # relative — pass through
+
+        split_absolute_pattern("/*.py", home)
+          → ValueError                               # would scan host root
+    """
+    if not pattern.startswith("/"):
+        return None
+
+    pure = PurePosixPath(pattern)
+    parts = pure.parts  # ("/", "skills", "**", "*.py")
+
+    glob_idx: int | None = None
+    for i, part in enumerate(parts):
+        if any(c in part for c in _GLOB_META_CHARS):
+            glob_idx = i
+            break
+
+    if glob_idx is None:
+        # Pattern is a literal absolute path — split before the leaf
+        # so ``base.glob(leaf)`` becomes an exact-match probe.
+        if len(parts) <= 1:
+            raise ValueError(
+                f"Pattern {pattern!r} has no name component to glob.",
+            )
+        glob_idx = len(parts) - 1
+
+    base_path = PurePosixPath(*parts[:glob_idx])
+    if str(base_path) == "/":
+        raise ValueError(
+            f"Pattern {pattern!r} would glob from the filesystem root. "
+            "Provide a literal directory prefix "
+            "(e.g. '/skills/**/*.md' instead of '/**/*.md').",
+        )
+
+    base = resolve_virtual_path(str(base_path), home)
+    relative = "/".join(parts[glob_idx:])
+    return base, relative
