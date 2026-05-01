@@ -131,6 +131,33 @@ is an edit to a file, anyone can check the diff.
 
 Behavioral resolutions don't survive context windows. File edits do.
 
+### Action Item Inspiration: Strengthening S4
+
+A surprising number of bedrock causes turn out to be **S4 weaknesses** (in VSM terms —
+see `mountaineering/philosophy.md` for the full framing). The agent didn't notice X
+happened. Couldn't reach the operator when stuck. Didn't react in time. Lost context
+across a long wait. Had no API for the data it needed. These are all symptoms of a weak
+intelligence/adaptation function — the agent isn't perceiving or interacting with its
+environment well enough.
+
+When a bedrock node has that shape, don't write a behavioral action item — open the
+`patterns` skill. It's a brainstorm bank organized roughly by the kind of S4 gap:
+
+| Bedrock shape | Where to look |
+|---|---|
+| "Agent didn't know X happened" / info was stale | `patterns/world-scanning.md` — turn it into a poller |
+| "Agent didn't notice X *didn't* happen" | `patterns/world-scanning.md` "Inversions" — dead-man switch |
+| "Agent reacted to a system event late" | `patterns/os-events-{macos,windows,linux}.md` — bind to the OS-native hook |
+| "Agent had no way to reach the operator / another agent" | `patterns/messaging.md` — pick a channel |
+| "Agent burned tokens waiting / lost context across a wait" | `patterns/async-tasks.md` — async-block on the wake-up signal |
+| "No API exists for the data we needed" | `patterns/browser-automation.md` — Playwright + persistent profile |
+
+These all map cleanly to *concrete artifacts* — a `pollers.json` entry, a launchd plist,
+an `osascript` one-liner, an `async_mode=True` shell call, a Playwright skill — which is
+exactly the bar this step sets. Reach for `patterns` whenever an action item is about to
+drift toward "the agent should pay more attention to X." That phrase is almost always an
+S4 gap with a structural fix.
+
 ### Step 6: Verify the Chain
 
 Read the full tree from the problem to each bedrock node. The chain should be a
@@ -203,6 +230,12 @@ installation and `CHAINLINK_USAGE.md` for the workflow.
 **Important:** Use a dedicated chainlink database for 5 Whys — separate from task
 tracking or backlog management. RCA chains and task backlogs serve different purposes
 and create noise when mixed. See CHAINLINK_SETUP.md for how to set this up.
+
+A common sibling use of chainlink (in its own database) is the **interest backlog** —
+see `patterns/interest-backlog.md`. The two share substrate but answer different
+questions: 5-whys answers *why this kept happening*; interest backlog answers *what
+have I noticed but not yet acted on*. Items in the interest backlog often get
+escalated to a five-whys analysis once they recur.
 
 If chainlink isn't available, write the tree as structured markdown (see Output
 Format below). The methodology is the same either way — chainlink just gives you

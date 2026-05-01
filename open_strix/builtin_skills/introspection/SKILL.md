@@ -131,6 +131,35 @@ bridges both skills — it reads events.jsonl to find which files you access mos
 informing both debugging (are you reading the same file repeatedly?) and memory
 optimization (should hot files become blocks?).
 
+## Patterns That Consume Introspection
+
+The `patterns/` skill includes several pattern files that explicitly call introspection
+as the *diagnostic step*. Reach for these when introspection has surfaced the *what*
+and you need the *how-to-fix* shape:
+
+- **`patterns/circuit-breaker.md`** — when you're stuck in a loop, introspection
+  reveals the loop in `events.jsonl`; circuit-breaker is the discipline of stopping and
+  what to do next.
+- **`patterns/try-harder.md`** — when behavior keeps drifting, introspection finds the
+  drift; try-harder is the menu of structural fixes (edit a block, edit checkpoint.md,
+  identify conflicting files) — the non-grit moves an agent has that humans don't.
+- **`patterns/journal-as-breadcrumbs.md`** — how to write journal entries that
+  introspection queries can actually use. Includes the handle / intent / success-path /
+  failure-path template.
+- **`patterns/context-boundaries.md`** — the survival hierarchy across context-loss
+  boundaries; introspection is the consumer of the things that survive (events log,
+  journal, state files).
+- **`patterns/coordination.md`** — S2 collisions (duplicate firings, cron storms,
+  oscillating state files, two-agents-replied-to-same-message) leave their footprint
+  in `events.jsonl`. Query for tool calls happening within the same second across
+  different sessions or schedules — that's the collision signature. The patterns file
+  has the toolkit (idempotency keys, jitter, mkdir-as-claim, debounce); introspection
+  is how you find the collision in the first place.
+
+The general flow: introspection finds *what* happened, the patterns above translate
+that into a concrete artifact (block edit, checkpoint update, file rewrite, structural
+change). Pair with `five-whys` when the cause needs decomposition before the fix.
+
 ## Companion Guides
 
 For specific debugging workflows, read these files:

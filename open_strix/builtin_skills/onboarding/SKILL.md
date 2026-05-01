@@ -84,6 +84,10 @@ Over the next few days, depth emerges naturally from doing real work:
 - You'll do the same task more than once → that becomes a skill (see the **skill-creator** builtin)
 - You'll form opinions about how things are going → that becomes a disposition block
 - You'll want to know if things are working → the **prediction-review** builtin closes that loop
+- You'll hit friction the basics don't cover (didn't notice X, couldn't reach human, lost
+  context across a wait) → the **patterns** builtin is the brainstorm bank for the
+  structural fix. See `establishing-skills.md` for how patterns underpin S4 (sensing
+  and reacting to the world).
 
 Don't rush any of this. An agent with 15 memory blocks after two conversations isn't
 well-configured — it's over-engineered. Let complexity emerge from actual needs.
