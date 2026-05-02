@@ -38,6 +38,7 @@ from .config import (
     AppConfig,
     DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
     DEFAULT_MODEL_MAX_RETRIES,
+    DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
     RepoLayout,
     bootstrap_home_repo,
     load_config,
@@ -72,6 +73,14 @@ from .web_ui import WebChatMixin
 UTC = timezone.utc
 LOG_ROLL_BYTES = 1_000_000
 TRANSIENT_PROVIDER_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
+MODEL_REQUEST_TIMEOUT_ERROR_NAMES = frozenset({
+    "APITimeoutError",
+    "ConnectTimeout",
+    "PoolTimeout",
+    "ReadTimeout",
+    "TimeoutException",
+    "WriteTimeout",
+})
 
 
 def utc_now_iso() -> str:
@@ -126,14 +135,20 @@ def _build_chat_model(
     *,
     max_retries: int = DEFAULT_MODEL_MAX_RETRIES,
     max_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS,
+    request_timeout_seconds: float = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS,
 ) -> Any:
     # langchain-anthropic falls back to 4096 max output tokens for any model
     # not in its Claude-only profile table. MiniMax-M2.5 triggers that fallback,
     # which truncates tool_use args (e.g. write_file content) mid-stream. Pass
     # max_tokens explicitly so large tool calls fit.
+    #
+    # request_timeout_seconds is the client-side model request budget. LangChain
+    # providers commonly accept it as ``timeout``; Anthropic aliases that to its
+    # SDK request timeout.
     model_init_params: dict[str, Any] = {
         "max_retries": max(0, int(max_retries)),
         "max_tokens": max(1, int(max_tokens)),
+        "timeout": float(request_timeout_seconds),
     }
     if model_name.startswith("openai:"):
         model_init_params["use_responses_api"] = True
@@ -201,6 +216,14 @@ def _error_log_fields(exc: Exception) -> dict[str, Any]:
     if request_id is not None:
         payload["provider_request_id"] = request_id
     return payload
+
+
+def _is_model_request_timeout_error(exc: Exception) -> bool:
+    """Classify timeout-like provider errors without binding to one SDK."""
+    return any(
+        cls.__name__ in MODEL_REQUEST_TIMEOUT_ERROR_NAMES
+        for cls in type(exc).__mro__
+    )
 
 
 def _is_transient_provider_error(exc: Exception) -> bool:
@@ -505,6 +528,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             model_name,
             max_retries=self.config.model_max_retries,
             max_tokens=self.config.model_max_output_tokens,
+            request_timeout_seconds=self.config.model_request_timeout_seconds,
         )
         skills_sources: list[str] = []
         if self.layout.skills_dir.exists():
@@ -947,6 +971,27 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 )
             except Exception as exc:
                 import traceback
+                if _is_model_request_timeout_error(exc):
+                    self._last_turn_failure = (
+                        "Your previous turn was dropped because the model "
+                        "provider stopped responding within the configured "
+                        "model_request_timeout_seconds budget (likely a "
+                        "transient network or gateway issue). No further "
+                        "automatic retry was attempted. If the work in that "
+                        "turn was important, re-trigger it."
+                    )
+                    self.log_event(
+                        "warning",
+                        where="event_worker",
+                        warning_type="model_request_timeout",
+                        source_event_type=event.event_type,
+                        channel_id=event.channel_id,
+                        error=str(exc),
+                        traceback=traceback.format_exc(),
+                        **_error_log_fields(exc),
+                    )
+                    continue
+
                 self._last_turn_failure = (
                     f"Your previous turn ended with an error: {type(exc).__name__}: {exc}. "
                     "Before retrying, reflect on what went wrong. If this is a recurring "

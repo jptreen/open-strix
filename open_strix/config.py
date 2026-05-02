@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_MODEL_PROVIDER = "anthropic"
 DEFAULT_MODEL_MAX_RETRIES = 6
 DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 32768
+# Client-side timeout for one model provider request. This is a local
+# worker-liveness guard; provider proxies may still apply their own
+# retry, failover, and upstream timeout policies. See tony-9k6.
+DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS = 60.0
 STATE_DIR_NAME = "state"
 DEFAULT_WEB_UI_HOST = "127.0.0.1"
 DEFAULT_WEB_UI_CHANNEL_ID = "local-web"
@@ -29,6 +34,7 @@ DEFAULT_CONFIG = """\
 model: MiniMax-M2.5
 model_max_retries: 6
 model_max_output_tokens: 32768
+model_request_timeout_seconds: 60.0
 journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
@@ -208,6 +214,7 @@ class AppConfig:
     model: str = DEFAULT_MODEL
     model_max_retries: int = DEFAULT_MODEL_MAX_RETRIES
     model_max_output_tokens: int = DEFAULT_MODEL_MAX_OUTPUT_TOKENS
+    model_request_timeout_seconds: float = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
     name: str = ""
     journal_entries_in_prompt: int = 90
     discord_messages_in_prompt: int = 10
@@ -323,6 +330,24 @@ def _parse_channel_handlers(raw: Any) -> dict[str, dict[str, str]]:
     return handlers
 
 
+def _parse_request_timeout_seconds(raw: Any) -> float:
+    """Coerce config.yaml ``model_request_timeout_seconds`` to a positive float.
+
+    Accepts None / missing (use default), int, float, or numeric string.
+    Non-positive, non-finite, or unparseable values fall back to the default.
+    The timeout is the per-request client budget; see config constant.
+    """
+    if raw is None:
+        return DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
+    if not math.isfinite(value) or value <= 0:
+        return DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
+    return value
+
+
 def load_config(layout: RepoLayout) -> AppConfig:
     loaded = yaml.safe_load(layout.config_file.read_text(encoding="utf-8")) or {}
     model_raw = loaded.get("model", DEFAULT_MODEL)
@@ -334,6 +359,9 @@ def load_config(layout: RepoLayout) -> AppConfig:
         model_max_retries=max(0, int(loaded.get("model_max_retries", DEFAULT_MODEL_MAX_RETRIES))),
         model_max_output_tokens=max(
             1, int(loaded.get("model_max_output_tokens", DEFAULT_MODEL_MAX_OUTPUT_TOKENS))
+        ),
+        model_request_timeout_seconds=_parse_request_timeout_seconds(
+            loaded.get("model_request_timeout_seconds")
         ),
         name=str(loaded.get("name", "")).strip(),
         journal_entries_in_prompt=int(loaded.get("journal_entries_in_prompt", 90)),
@@ -373,6 +401,10 @@ def _ensure_config_defaults(config_file: Path) -> None:
 
     if "model_max_output_tokens" not in loaded:
         loaded["model_max_output_tokens"] = DEFAULT_MODEL_MAX_OUTPUT_TOKENS
+        changed = True
+
+    if "model_request_timeout_seconds" not in loaded:
+        loaded["model_request_timeout_seconds"] = DEFAULT_MODEL_REQUEST_TIMEOUT_SECONDS
         changed = True
 
     if "always_respond_bot_ids" not in loaded:

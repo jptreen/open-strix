@@ -73,7 +73,11 @@ def test_default_model_is_minimax_even_if_config_model_is_null(
     assert app.config.model == "MiniMax-M2.5"
     assert app.config.model_max_retries == 6
     assert model_init["model_name"] == "anthropic:MiniMax-M2.5"
-    assert model_init["kwargs"] == {"max_retries": 6, "max_tokens": 32768}
+    assert model_init["kwargs"] == {
+        "max_retries": 6,
+        "max_tokens": 32768,
+        "timeout": 60.0,
+    }
     assert captured["model"] is sentinel_model
     assert captured["skills"] == ["/skills", "/.open_strix_builtin_skills"]
     config_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
@@ -122,7 +126,11 @@ def test_custom_model_max_retries_is_passed_to_model_init(
     app_mod.OpenStrixApp(tmp_path)
 
     assert model_init["model_name"] == "anthropic:claude-opus-4-1-20250805"
-    assert model_init["kwargs"] == {"max_retries": 11, "max_tokens": 32768}
+    assert model_init["kwargs"] == {
+        "max_retries": 11,
+        "max_tokens": 32768,
+        "timeout": 60.0,
+    }
 
 
 def test_log_event_includes_stable_session_id_for_app_run(
