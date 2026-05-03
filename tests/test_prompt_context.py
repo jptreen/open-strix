@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import open_strix.app as app_mod
+from open_strix.prompts import render_turn_prompt
 
 
 class DummyAgent:
@@ -83,6 +84,61 @@ def test_prompt_includes_last_n_discord_messages_only(
     assert "channel_visibility: unknown" in channel_context_section
     assert "channel_name: (none)" in channel_context_section
     assert "channel_id: 123" in channel_context_section
+
+
+def test_channel_context_heading_uses_channel_type(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    prompt = app._render_prompt(
+        app_mod.AgentEvent(
+            event_type="poller",
+            prompt="current",
+            channel_id="!room:matrix.org",
+            channel_type="matrix",
+            author="@alice:matrix.org",
+        ),
+    )
+
+    assert "4) Matrix channel context:" in prompt
+    assert "4) Discord channel context:" not in prompt
+
+
+def test_channel_context_heading_uses_event_type_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(app_mod, "create_deep_agent", lambda **_: DummyAgent())
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    prompt = app._render_prompt(
+        app_mod.AgentEvent(
+            event_type="web_message",
+            prompt="current",
+            channel_id="local-web",
+            author="local_user",
+        ),
+    )
+
+    assert "4) Web channel context:" in prompt
+
+
+def test_channel_context_heading_accepts_explicit_context_label() -> None:
+    prompt = render_turn_prompt(
+        journal_entries=[],
+        memory_blocks=[],
+        recent_messages=[],
+        current_event={
+            "event_type": "external_message",
+            "prompt": "current",
+            "channel_context_label": "slack",
+        },
+    )
+
+    assert "4) Slack channel context:" in prompt
 
 
 def test_journal_rendering_format_and_channel_id_autofill(

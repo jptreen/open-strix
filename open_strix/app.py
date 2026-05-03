@@ -874,6 +874,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                 "channel_name": event.channel_name,
                 "channel_conversation_type": event.channel_conversation_type,
                 "channel_visibility": event.channel_visibility,
+                "channel_type": event.channel_type,
                 "author": event.author,
                 "attachment_names": event.attachment_names,
                 "scheduler_name": event.scheduler_name,

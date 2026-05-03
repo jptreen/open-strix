@@ -231,6 +231,66 @@ def render_chat_messages(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(rendered)
 
 
+_CHANNEL_CONTEXT_LABELS = {
+    "api": "API",
+    "discord": "Discord",
+    "github": "GitHub",
+    "stdin": "stdin",
+    "web": "Web",
+}
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _channel_type_from_event_type(event_type: Any) -> str | None:
+    raw_event_type = _first_text(event_type)
+    if not raw_event_type:
+        return None
+
+    event_name = raw_event_type.lower()
+    for suffix in ("_message", "_event"):
+        if event_name.endswith(suffix):
+            return event_name[: -len(suffix)]
+    return None
+
+
+def _format_channel_context_label(raw_label: str) -> str:
+    normalized = raw_label.strip()
+    if not normalized:
+        return ""
+
+    known_label = _CHANNEL_CONTEXT_LABELS.get(normalized.lower())
+    if known_label:
+        return known_label
+
+    words = normalized.replace("_", "-").split("-")
+    return " ".join(word.capitalize() for word in words if word)
+
+
+def render_channel_context_heading(event: Mapping[str, Any]) -> str:
+    raw_label = _first_text(
+        event.get("channel_context_label"),
+        event.get("channel_type"),
+        event.get("source_platform"),
+        _channel_type_from_event_type(event.get("event_type")),
+    )
+    if not raw_label:
+        return "Channel context"
+
+    label = _format_channel_context_label(raw_label)
+    if not label:
+        return "Channel context"
+    return f"{label} channel context"
+
+
 def render_current_event(event: Mapping[str, Any]) -> str:
     now = datetime.now(tz=UTC)
     timestamp = _format_timestamp(now, now=now)
@@ -298,6 +358,7 @@ def render_turn_prompt(
     journals = render_journal_entries(journal_entries)
     blocks_text = render_memory_blocks(memory_blocks)
     messages_text = render_chat_messages(recent_messages)
+    channel_context_heading = render_channel_context_heading(current_event)
     channel_context_text = render_channel_context(current_event)
     current_event_text = render_current_event(current_event)
 
@@ -334,7 +395,7 @@ def render_turn_prompt(
         3) Recent messages:
         {messages_text}
 
-        4) Discord channel context:
+        4) {channel_context_heading}:
         {channel_context_text}
 
         5) Current message + reply channel:

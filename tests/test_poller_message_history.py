@@ -416,7 +416,7 @@ class TestDeduplication:
         messages_section = _extract_section(
             prompt,
             "3) Recent messages:\n",
-            "4) Discord channel context:",
+            "4) Matrix channel context:",
         )
 
         # Earlier message should be in section 3
