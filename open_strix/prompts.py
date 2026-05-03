@@ -231,15 +231,6 @@ def render_chat_messages(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(rendered)
 
 
-_CHANNEL_CONTEXT_LABELS = {
-    "api": "API",
-    "discord": "Discord",
-    "github": "GitHub",
-    "stdin": "stdin",
-    "web": "Web",
-}
-
-
 def _first_text(*values: Any) -> str | None:
     for value in values:
         if value in (None, ""):
@@ -266,10 +257,6 @@ def _format_channel_context_label(raw_label: str) -> str:
     normalized = raw_label.strip()
     if not normalized:
         return ""
-
-    known_label = _CHANNEL_CONTEXT_LABELS.get(normalized.lower())
-    if known_label:
-        return known_label
 
     words = normalized.replace("_", "-").split("-")
     return " ".join(word.capitalize() for word in words if word)
