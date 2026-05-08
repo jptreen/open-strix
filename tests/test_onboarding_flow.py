@@ -30,6 +30,21 @@ def test_onboarding_flow_bootstraps_expected_home_repo(tmp_path: Path) -> None:
 
     _run(["uv", "init", "--python", "3.11", "--no-readme"], cwd=home, env=env)
     _run(["uv", "add", "--editable", str(repo_root)], cwd=home, env=env)
+
+    # Disable the built-in web UI for this test — it doesn't exercise the
+    # web UI's runtime behavior, only the first-run bootstrap files. Without
+    # this, the subprocess tries to bind the DEFAULT_CONFIG port (8084) and
+    # fails on dev machines where that port is already in use (another
+    # open-strix instance, stale zombie, parallel pytest worker, etc.),
+    # producing an intermittent CalledProcessError.
+    #
+    # Bootstrap flow tolerates a pre-existing config: _write_if_missing
+    # skips the DEFAULT_CONFIG write, then _ensure_config_defaults injects
+    # every other default key (model, model_max_retries, always_respond_bot_ids,
+    # bot_account_ids, ...) so the assertions below remain load-bearing for
+    # bootstrap correctness. See open-strix-qk5.
+    (home / "config.yaml").write_text("web_ui_port: 0\n", encoding="utf-8")
+
     first_run = _run(["uv", "run", "open-strix"], cwd=home, env=env, stdin="")
 
     assert "No Discord token configured. Running in stdin mode." in first_run.stdout
