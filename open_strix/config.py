@@ -39,6 +39,7 @@ journal_entries_in_prompt: 90
 discord_messages_in_prompt: 10
 discord_token_env: DISCORD_TOKEN
 always_respond_bot_ids: []
+bot_account_ids: []
 api_port: 0
 web_ui_port: 8084
 web_ui_host: 127.0.0.1
@@ -220,6 +221,7 @@ class AppConfig:
     discord_messages_in_prompt: int = 10
     discord_token_env: str = "DISCORD_TOKEN"
     always_respond_bot_ids: set[str] = field(default_factory=set)
+    bot_account_ids: set[str] = field(default_factory=set)
     session_log_retention_days: int = 30
     api_port: int = 0
     web_ui_port: int = 0
@@ -368,6 +370,7 @@ def load_config(layout: RepoLayout) -> AppConfig:
         discord_messages_in_prompt=int(loaded.get("discord_messages_in_prompt", 10)),
         discord_token_env=str(loaded.get("discord_token_env", "DISCORD_TOKEN")),
         always_respond_bot_ids=_normalize_id_list(loaded.get("always_respond_bot_ids")),
+        bot_account_ids=_normalize_id_list(loaded.get("bot_account_ids")),
         session_log_retention_days=int(loaded.get("session_log_retention_days", 30)),
         api_port=int(loaded.get("api_port", 0)),
         web_ui_port=int(loaded.get("web_ui_port", 0)),
@@ -409,6 +412,10 @@ def _ensure_config_defaults(config_file: Path) -> None:
 
     if "always_respond_bot_ids" not in loaded:
         loaded["always_respond_bot_ids"] = []
+        changed = True
+
+    if "bot_account_ids" not in loaded:
+        loaded["bot_account_ids"] = []
         changed = True
 
     if "api_port" not in loaded:

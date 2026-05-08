@@ -263,6 +263,141 @@ async def test_enqueue_event_drops_poller_path_bot_event(
     assert drop_rows[0]["source_event_type"] == "poller"
 
 
+def _make_app_with_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    allowlist: list[str] | None = None,
+    bot_account_ids: list[str] | None = None,
+) -> app_mod.OpenStrixApp:
+    """Build an OpenStrixApp with explicit bot_account_ids + allowlist.
+
+    Mirrors `_make_app_with_allowlist` but covers the t1a override too. Used
+    to verify the OR'd predicate: per-transport `event.is_bot` and operator
+    `bot_account_ids` both feed into the bot-classification gate.
+    """
+    _stub_agent_factory(monkeypatch)
+    lines: list[str] = []
+    if allowlist:
+        lines.append("always_respond_bot_ids:")
+        lines.extend(f"  - {bid}" for bid in allowlist)
+    else:
+        lines.append("always_respond_bot_ids: []")
+    if bot_account_ids:
+        lines.append("bot_account_ids:")
+        lines.extend(f"  - {bid}" for bid in bot_account_ids)
+    else:
+        lines.append("bot_account_ids: []")
+    (tmp_path / "config.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return app_mod.OpenStrixApp(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_drops_event_with_author_in_bot_account_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # is_bot=False but author_id listed in bot_account_ids -> treated as bot
+    # and dropped (no allowlist rescue). This is the operator force-bot path.
+    app = _make_app_with_overrides(
+        tmp_path, monkeypatch, allowlist=[], bot_account_ids=["7"],
+    )
+
+    event = app_mod.AgentEvent(
+        event_type="zulip_message",
+        prompt="ping",
+        channel_id="555",
+        is_bot=False,
+        author_id="7",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 0
+    rows = _read_events(tmp_path)
+    drop_rows = [r for r in rows if r["type"] == "event_dropped"]
+    assert len(drop_rows) == 1
+    # Reuses bot_allowlist reason — drop semantics are identical, ops_dashboard
+    # aggregates by reason and we don't want to fragment the bucket.
+    assert drop_rows[0]["reason"] == "bot_allowlist"
+    assert drop_rows[0]["author_id"] == "7"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_keeps_event_when_author_not_in_bot_account_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # is_bot=False and author_id NOT in bot_account_ids -> normal human path.
+    app = _make_app_with_overrides(
+        tmp_path, monkeypatch, allowlist=[], bot_account_ids=["7"],
+    )
+
+    event = app_mod.AgentEvent(
+        event_type="zulip_message",
+        prompt="hello",
+        channel_id="555",
+        is_bot=False,
+        author_id="999",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 1
+    rows = _read_events(tmp_path)
+    assert not any(r["type"] == "event_dropped" for r in rows)
+
+
+def test_should_process_event_is_bot_true_unaffected_by_bot_account_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # is_bot=True behaves identically regardless of bot_account_ids contents:
+    # allowlisted bot still passes, non-allowlisted bot still drops. The
+    # override only OR's into the bot classification — it never demotes.
+    app_listed = _make_app_with_overrides(
+        tmp_path, monkeypatch, allowlist=["42"], bot_account_ids=["42"],
+    )
+    allowlisted_bot = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="hi",
+        is_bot=True,
+        author_id="42",
+    )
+    assert app_listed.should_process_event(allowlisted_bot) is True
+
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    app_unlisted = _make_app_with_overrides(
+        other_dir, monkeypatch, allowlist=["42"], bot_account_ids=["999"],
+    )
+    unlisted_bot = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="hi",
+        is_bot=True,
+        author_id="7",
+    )
+    assert app_unlisted.should_process_event(unlisted_bot) is False
+
+
+def test_should_process_event_bot_account_id_with_allowlist_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Operator force-bots an account AND adds it to always_respond — the
+    # override classification is correctable via the allowlist, same as a
+    # transport-detected bot.
+    app = _make_app_with_overrides(
+        tmp_path, monkeypatch, allowlist=["7"], bot_account_ids=["7"],
+    )
+
+    event = app_mod.AgentEvent(
+        event_type="zulip_message",
+        prompt="ping",
+        is_bot=False,
+        author_id="7",
+    )
+    assert app.should_process_event(event) is True
+
+
 def test_custom_model_max_retries_is_passed_to_model_init(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

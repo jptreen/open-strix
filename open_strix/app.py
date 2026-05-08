@@ -650,8 +650,17 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         the author's ID is in ``always_respond_bot_ids``. Used by
         ``enqueue_event`` so every transport (Discord, scheduler/poller, REST,
         web UI, kaleidoscope dispatch) consults the same predicate.
+
+        ``event.is_bot`` (per-transport heuristic) is OR'd with
+        ``config.bot_account_ids`` (operator override) so a known bot whose
+        per-transport detection misclassifies it as human can be corrected
+        without fixing the upstream heuristic.
         """
-        if not event.is_bot:
+        is_bot = event.is_bot or (
+            event.author_id is not None
+            and str(event.author_id) in self.config.bot_account_ids
+        )
+        if not is_bot:
             return True
         return self.should_respond_to_bot(event.author_id)
 
