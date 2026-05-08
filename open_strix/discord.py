@@ -441,6 +441,14 @@ class DiscordMixin:
                 channel_visibility=channel_visibility,
                 author=str(message.author),
                 author_id=author_id,
+                # Propagate Discord's authoritative bot flag onto the event so
+                # ``should_process_event`` (consulted by ``enqueue_event``)
+                # sees the same data shape as poller-path events. Without this
+                # the central predicate's deny-by-default-bots branch would
+                # never fire for Discord messages — Discord today is gated
+                # only by the ``should_process_discord_message`` early-return
+                # wrapper (open-strix-8xd).
+                is_bot=author_is_bot,
                 attachment_names=attachment_names,
                 source_id=str(message.id),
             ),

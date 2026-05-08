@@ -10,6 +10,10 @@ Event vocabulary used:
 - ``tool_call`` — tool invocations during a turn
 - ``event_queued`` — events entering the agent queue (covers all sources)
 - ``event_deduped`` — events skipped (dedup hits)
+- ``event_dropped`` — events rejected pre-queue by a policy gate. Carries
+  ``reason`` (e.g. ``bot_allowlist``), ``source_event_type``, ``author_id``,
+  ``channel_id``, ``scheduler_name``, ``source_id``. Aggregated by reason
+  so ops can investigate bot-storm dampener activity (open-strix-8xd).
 - ``shell_job_complete`` — async shell jobs finishing
 - failure-shaped: ``agent_turn_missing_send_message``,
   ``post_turn_block_validation_failed``, ``scheduler_invalid_*``
@@ -77,6 +81,7 @@ def compute_stats(events: list[dict[str, Any]], days: int) -> dict[str, Any]:
     invokes_by_hour: Counter[str] = Counter()
     queued_by_hour: Counter[str] = Counter()
     deduped_by_source: Counter[str] = Counter()
+    dropped_by_reason: Counter[str] = Counter()
     failures_by_kind: Counter[str] = Counter()
     turn_total_seconds: list[float] = []
     turn_invoke_seconds: list[float] = []
@@ -123,6 +128,12 @@ def compute_stats(events: list[dict[str, Any]], days: int) -> dict[str, Any]:
             queued_by_hour[_hour_key(ts)] += 1
         elif kind == "event_deduped":
             deduped_by_source[record.get("key") or "unknown"] += 1
+        elif kind == "event_dropped":
+            # Aggregate by ``reason`` so the dashboard surfaces dampener
+            # activity (e.g. ``bot_allowlist`` drops). Falls back to
+            # "unknown" so future drop-reasons added without a dashboard
+            # update still appear in the bin rather than vanishing.
+            dropped_by_reason[record.get("reason") or "unknown"] += 1
         elif kind == "turn_timing":
             total = record.get("total_seconds")
             invoke = record.get("agent_invoke_seconds")
@@ -170,6 +181,7 @@ def compute_stats(events: list[dict[str, Any]], days: int) -> dict[str, Any]:
         "agent_invocations": by_event.get("agent_invoke_start", 0),
         "events_queued": by_event.get("event_queued", 0),
         "events_deduped": by_event.get("event_deduped", 0),
+        "events_dropped": by_event.get("event_dropped", 0),
         "tool_calls": by_event.get("tool_call", 0),
         "shell_jobs_completed": by_event.get("shell_job_complete", 0),
         "failures": sum(failures_by_kind.values()),
@@ -192,6 +204,7 @@ def compute_stats(events: list[dict[str, Any]], days: int) -> dict[str, Any]:
         "invoke_by_scheduler": dict(invoke_by_scheduler.most_common(20)),
         "queued_by_source": dict(queued_by_source.most_common()),
         "deduped_by_source": dict(deduped_by_source.most_common(20)),
+        "dropped_by_reason": dict(dropped_by_reason.most_common(20)),
         "failures_by_kind": dict(failures_by_kind.most_common()),
         "timeseries": timeseries,
         "recent_failures": recent_failures,

@@ -104,6 +104,165 @@ def test_bot_allowlist_config_controls_message_processing(
     assert app.should_process_discord_message(author_is_bot=True, author_id="42") is True
 
 
+def _make_app_with_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    allowlist: list[str],
+) -> app_mod.OpenStrixApp:
+    """Build an OpenStrixApp with a stubbed agent and the given allowlist."""
+    _stub_agent_factory(monkeypatch)
+    if allowlist:
+        body = "always_respond_bot_ids:\n" + "".join(f"  - {bid}\n" for bid in allowlist)
+    else:
+        body = "always_respond_bot_ids: []\n"
+    (tmp_path / "config.yaml").write_text(body, encoding="utf-8")
+    return app_mod.OpenStrixApp(tmp_path)
+
+
+def test_should_process_event_human_author_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Human-authored events bypass the allowlist regardless of author_id.
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="hi",
+        is_bot=False,
+        author_id="999",
+    )
+    assert app.should_process_event(event) is True
+
+
+def test_should_process_event_bot_in_allowlist_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="hi",
+        is_bot=True,
+        author_id="42",
+    )
+    assert app.should_process_event(event) is True
+
+
+def test_should_process_event_bot_not_in_allowlist_drops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="hi",
+        is_bot=True,
+        author_id="7",
+    )
+    assert app.should_process_event(event) is False
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_drops_disallowed_bot_and_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bot event whose author is not allowlisted: queue.put never called and
+    # an event_dropped log line is emitted with reason=bot_allowlist.
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="ping",
+        channel_id="999",
+        is_bot=True,
+        author_id="7",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 0
+    rows = _read_events(tmp_path)
+    drop_rows = [r for r in rows if r["type"] == "event_dropped"]
+    assert len(drop_rows) == 1
+    assert drop_rows[0]["reason"] == "bot_allowlist"
+    assert drop_rows[0]["author_id"] == "7"
+    assert drop_rows[0]["channel_id"] == "999"
+    assert drop_rows[0]["source_event_type"] == "discord_message"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_keeps_allowlisted_bot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="ping",
+        channel_id="999",
+        is_bot=True,
+        author_id="42",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 1
+    rows = _read_events(tmp_path)
+    assert not any(r["type"] == "event_dropped" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_keeps_human_event_regardless_of_allowlist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Empty allowlist: humans still pass freely.
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, [])
+
+    event = app_mod.AgentEvent(
+        event_type="discord_message",
+        prompt="ping",
+        channel_id="999",
+        is_bot=False,
+        author_id="7",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 1
+    rows = _read_events(tmp_path)
+    assert not any(r["type"] == "event_dropped" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_event_drops_poller_path_bot_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Predicate must fire on poller-path events too — the whole point of
+    # lifting the gate out of Discord is that pollers (Zulip/Matrix etc.)
+    # now consult it consistently.
+    app = _make_app_with_allowlist(tmp_path, monkeypatch, ["42"])
+
+    event = app_mod.AgentEvent(
+        event_type="poller",
+        prompt="poller-emitted",
+        channel_id="555",
+        is_bot=True,
+        author_id="9999",
+    )
+    await app.enqueue_event(event)
+
+    assert app.queue.qsize() == 0
+    rows = _read_events(tmp_path)
+    drop_rows = [r for r in rows if r["type"] == "event_dropped"]
+    assert len(drop_rows) == 1
+    assert drop_rows[0]["reason"] == "bot_allowlist"
+    assert drop_rows[0]["source_event_type"] == "poller"
+
+
 def test_custom_model_max_retries_is_passed_to_model_init(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -454,6 +613,55 @@ async def test_handle_discord_message_from_allowlisted_bot_is_processed(
     assert queued.event_type == "discord_message"
     assert queued.channel_id == "999"
     assert queued.author_id == "42"
+
+
+@pytest.mark.asyncio
+async def test_handle_discord_message_propagates_is_bot_to_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for open-strix-8xd: Discord's AgentEvent must carry the
+    # SDK's authoritative ``author.bot`` flag onto ``event.is_bot`` so the
+    # central ``should_process_event`` predicate sees the same data shape
+    # as poller-path events. Without this, removing the on_message early-
+    # return wrapper would silently break Discord bot detection.
+    _stub_agent_factory(monkeypatch)
+    (tmp_path / "config.yaml").write_text(
+        "always_respond_bot_ids:\n  - 42\n",
+        encoding="utf-8",
+    )
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class BotAuthor:
+        bot = True
+        id = 42
+
+        def __str__(self) -> str:
+            return "allowlisted-bot"
+
+    class HumanAuthor:
+        bot = False
+        id = 7
+
+        def __str__(self) -> str:
+            return "alice"
+
+    bot_msg = SimpleNamespace(
+        id=1, content="ping", channel=SimpleNamespace(id=999),
+        author=BotAuthor(), attachments=[],
+    )
+    human_msg = SimpleNamespace(
+        id=2, content="hello", channel=SimpleNamespace(id=999),
+        author=HumanAuthor(), attachments=[],
+    )
+
+    await app.handle_discord_message(bot_msg)
+    await app.handle_discord_message(human_msg)
+
+    bot_event = app.queue.get_nowait()
+    human_event = app.queue.get_nowait()
+    assert bot_event.is_bot is True
+    assert human_event.is_bot is False
 
 
 @pytest.mark.asyncio

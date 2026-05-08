@@ -128,6 +128,39 @@ def test_compute_stats_counts_and_attribution(tmp_path: Path) -> None:
     # so average is over sessions with at least one tool call.
     assert stats["summary"]["avg_tools_per_invocation"] == 1.5
 
+
+def test_compute_stats_aggregates_event_dropped_by_reason(tmp_path: Path) -> None:
+    # Regression for open-strix-8xd: the new event_dropped event type must
+    # surface in the dashboard summary + a dropped_by_reason counter,
+    # matching the precedent set by event_deduped → deduped_by_source.
+    records = [
+        {"type": "event_dropped", "timestamp": _ts(0),
+         "reason": "bot_allowlist", "source_event_type": "poller",
+         "author_id": "@familiar-freddie:srv", "channel_id": "ops_alerts"},
+        {"type": "event_dropped", "timestamp": _ts(0),
+         "reason": "bot_allowlist", "source_event_type": "discord_message",
+         "author_id": "999", "channel_id": "general"},
+        {"type": "event_dropped", "timestamp": _ts(1),
+         "reason": "bot_allowlist", "source_event_type": "matrix_message",
+         "author_id": "@bot:srv", "channel_id": "ops_alerts"},
+        # A future drop reason we haven't documented yet — should still be
+        # binned under its own key, not vanish.
+        {"type": "event_dropped", "timestamp": _ts(0), "reason": "rate_limit"},
+        # An event_dropped with no reason field — falls back to "unknown".
+        {"type": "event_dropped", "timestamp": _ts(0)},
+    ]
+    for record in records:
+        record["_ts"] = datetime.fromisoformat(
+            record["timestamp"].replace("Z", "+00:00")
+        )
+
+    stats = compute_stats(records, days=30)
+
+    assert stats["summary"]["events_dropped"] == 5
+    assert stats["dropped_by_reason"]["bot_allowlist"] == 3
+    assert stats["dropped_by_reason"]["rate_limit"] == 1
+    assert stats["dropped_by_reason"]["unknown"] == 1
+
     # Backlog has at least the documented gaps
     backlog_ids = {item["id"] for item in stats["backlog"]}
     assert {"token-usage", "llm-retries"}.issubset(backlog_ids)

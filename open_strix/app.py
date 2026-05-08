@@ -643,15 +643,37 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
             return False
         return str(author_id) in self.config.always_respond_bot_ids
 
+    def should_process_event(self, event: AgentEvent) -> bool:
+        """Transport-agnostic bot-allowlist gate.
+
+        Human-authored events always pass. Bot-authored events only pass when
+        the author's ID is in ``always_respond_bot_ids``. Used by
+        ``enqueue_event`` so every transport (Discord, scheduler/poller, REST,
+        web UI, kaleidoscope dispatch) consults the same predicate.
+        """
+        if not event.is_bot:
+            return True
+        return self.should_respond_to_bot(event.author_id)
+
     def should_process_discord_message(
         self,
         *,
         author_is_bot: bool,
         author_id: str | int | None,
     ) -> bool:
-        if not author_is_bot:
-            return True
-        return self.should_respond_to_bot(author_id)
+        """Compat wrapper for Discord's ``on_message`` early-return.
+
+        Lets Discord skip event construction for known-drop bots. The actual
+        rule lives in ``should_process_event`` — this just adapts the
+        author/is_bot kwargs into a minimal AgentEvent and delegates.
+        """
+        probe = AgentEvent(
+            event_type="discord_message",
+            prompt="",
+            is_bot=author_is_bot,
+            author_id=str(author_id) if author_id is not None else None,
+        )
+        return self.should_process_event(probe)
 
     def _iter_block_files(self) -> list[Path]:
         files = list(self.layout.blocks_dir.glob("*.yaml"))
@@ -717,6 +739,26 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         return f"{block_id}-{idx}"
 
     async def enqueue_event(self, event: AgentEvent) -> None:
+        # Transport-agnostic bot-allowlist gate. Drops bot-authored events
+        # whose author_id is not in always_respond_bot_ids. Runs before the
+        # dedupe bookkeeping so a dropped event does not claim its
+        # dedupe_key — the key stays free for any later legitimate event.
+        #
+        # Logged fields mirror ``event_queued`` (scheduler_name, source_id)
+        # so ops can correlate poller-dropped events back to the originating
+        # poller during bot-storm investigation. The bead's named use case.
+        if not self.should_process_event(event):
+            self.log_event(
+                "event_dropped",
+                reason="bot_allowlist",
+                source_event_type=event.event_type,
+                author_id=event.author_id,
+                channel_id=event.channel_id,
+                scheduler_name=event.scheduler_name,
+                source_id=event.source_id,
+            )
+            return
+
         if event.dedupe_key:
             if event.dedupe_key in self.pending_scheduler_keys:
                 self.log_event("event_deduped", key=event.dedupe_key)
