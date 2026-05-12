@@ -444,6 +444,72 @@ class TestOnPollerFire:
         assert "name=state-poller" in app.enqueued[0].prompt
 
     @pytest.mark.asyncio
+    async def test_poller_state_dir_honored_from_os_environ(
+        self, tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """STATE_DIR pre-set in the parent process env (e.g. via a systemd
+        unit Environment= directive) must win over the skill_dir default.
+        """
+        skill_dir = tmp_home / "skills" / "state-env-test"
+        skill_dir.mkdir(parents=True)
+        external_state = tmp_home / "external-state"
+        external_state.mkdir()
+        (skill_dir / "poller.py").write_text(
+            'import json, os\n'
+            'sd = os.environ.get("STATE_DIR", "")\n'
+            'print(json.dumps({"poller": "state-env", "prompt": f"dir={sd}"}))\n'
+        )
+
+        monkeypatch.setenv("STATE_DIR", str(external_state))
+
+        poller = PollerConfig(
+            name="state-env-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert f"dir={external_state}" in app.enqueued[0].prompt
+        assert f"dir={skill_dir}" not in app.enqueued[0].prompt
+
+    @pytest.mark.asyncio
+    async def test_poller_state_dir_honored_from_poller_env(
+        self, tmp_home: Path
+    ) -> None:
+        """STATE_DIR set in the per-poller env block (pollers.json) must win
+        over the skill_dir default.
+        """
+        skill_dir = tmp_home / "skills" / "state-poller-env-test"
+        skill_dir.mkdir(parents=True)
+        per_poller_state = tmp_home / "per-poller-state"
+        per_poller_state.mkdir()
+        (skill_dir / "poller.py").write_text(
+            'import json, os\n'
+            'sd = os.environ.get("STATE_DIR", "")\n'
+            'print(json.dumps({"poller": "state-pe", "prompt": f"dir={sd}"}))\n'
+        )
+
+        poller = PollerConfig(
+            name="state-pe-poller",
+            command="python poller.py",
+            cron="*/5 * * * *",
+            env={"STATE_DIR": str(per_poller_state)},
+            skill_dir=skill_dir,
+        )
+
+        app = FakeApp(tmp_home)
+        await app._on_poller_fire(poller)
+
+        assert len(app.enqueued) == 1
+        assert f"dir={per_poller_state}" in app.enqueued[0].prompt
+        assert f"dir={skill_dir}" not in app.enqueued[0].prompt
+
+    @pytest.mark.asyncio
     async def test_poller_multiple_lines(self, tmp_home: Path) -> None:
         skill_dir = tmp_home / "skills" / "multi"
         skill_dir.mkdir(parents=True)

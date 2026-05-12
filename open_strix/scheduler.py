@@ -330,7 +330,7 @@ class SchedulerMixin:
         completed (timeout, exec error, or non-zero exit).
         """
         env = {**os.environ, **poller.env}
-        env["STATE_DIR"] = str(poller.skill_dir)
+        env.setdefault("STATE_DIR", str(poller.skill_dir))
         env["POLLER_NAME"] = poller.name
 
         # Per-fire nonce so dedupe_key values can never collide across
