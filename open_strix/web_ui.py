@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 WEB_UI_CHANNEL_NAME = "Local Web"
 WEB_UI_AUTHOR = "local_user"
+STATIC_DIR = Path(__file__).with_name("static")
 WEB_UI_AUTHOR_ID = "local-web-user"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".heic"}
 
@@ -258,9 +259,7 @@ def _render_web_ui_page(strix: OpenStrixApp) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2016%2016%27%3E%3Cpath%20d%3D%27M11.5%204.5C11.5%202.01%209.99.5%207.5.5%205.01.5%203.5%202.01%203.5%204.5c0%202%201.5%203%203.5%204s2.5%202%202.5%203.5c0%201.38-1.12%202-2%202s-2-.62-2-2H3.5c0%202.49%202.01%204%204%204s4-1.51%204-4c0-2-1.5-3-3.5-4S5.5%206.5%205.5%204.5c0-1.38.62-2%202-2s2%201.12%202%202z%27%20fill%3D%27%230d766e%27%2F%3E%3C%2Fsvg%3E" />
     <title>{agent_name} Chat</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/fonts/inter.css">
     <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js" integrity="sha384-coEhNYf+uY/IAdm3afqLaaHhP4vzpDHARAMbRvTGjDwDSCD7DnG5dAKe4sDoUupt" crossorigin="anonymous"></script>
     <style>
       :root {{
@@ -1610,6 +1609,17 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
             raise web.HTTPNotFound()
         return web.FileResponse(target)
 
+    async def serve_asset(request: web.Request) -> web.StreamResponse:
+        asset_path = request.match_info.get("path", "")
+        target = (STATIC_DIR / asset_path).resolve()
+        try:
+            target.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            raise web.HTTPNotFound() from None
+        if not target.is_file():
+            raise web.HTTPNotFound()
+        return web.FileResponse(target)
+
     async def list_shell_jobs(request: web.Request) -> web.Response:
         try:
             scope = normalize_shell_job_scope(request.query.get("scope"))
@@ -1665,6 +1675,7 @@ def _build_web_ui_app(strix: OpenStrixApp) -> web.Application:
     app.router.add_get("/api/shell-jobs", list_shell_jobs)
     app.router.add_get("/api/shell-jobs/{job_id}", shell_job_detail)
     app.router.add_get("/files/{path:.*}", serve_file)
+    app.router.add_get("/assets/{path:.*}", serve_asset)
     app.router.add_get("/ops", ops_dashboard)
     app.router.add_get("/api/ops", ops_dashboard_json)
     return app

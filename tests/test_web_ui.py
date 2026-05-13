@@ -68,8 +68,7 @@ def test_web_ui_page_includes_markdown_assets_and_styles(tmp_path: Path) -> None
 
     assert '<script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js" integrity="sha384-coEhNYf+uY/IAdm3afqLaaHhP4vzpDHARAMbRvTGjDwDSCD7DnG5dAKe4sDoUupt" crossorigin="anonymous"></script>' in page
     assert (
-        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" '
-        'rel="stylesheet">'
+        '<link rel="stylesheet" href="/assets/fonts/inter.css">'
     ) in page
     assert 'font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;' in page
     assert 'marked.parse(text)' in page
@@ -78,6 +77,25 @@ def test_web_ui_page_includes_markdown_assets_and_styles(tmp_path: Path) -> None
     assert ".body table" in page
     assert ".body th" in page
     assert ".body td" in page
+
+
+@pytest.mark.asyncio
+async def test_web_ui_serves_vendored_font_assets(tmp_path: Path) -> None:
+    strix = DummyStrix(tmp_path / "atlas")
+    app = _build_web_ui_app(strix)
+    handler = next(
+        route.handler
+        for route in app.router.routes()
+        if route.method == "GET" and getattr(route.resource, "canonical", "").startswith("/assets/")
+    )
+
+    class DummyAssetRequest:
+        match_info = {"path": "fonts/inter.css"}
+
+    response = await handler(DummyAssetRequest())
+    assert response.status == 200
+    assert isinstance(response, web.FileResponse)
+    assert Path(response._path).name == "inter.css"
 
 
 def test_web_ui_page_refresh_updates_existing_message_reactions_without_replacing_nodes(tmp_path: Path) -> None:

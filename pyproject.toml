@@ -35,6 +35,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build]
 include = [
     "open_strix/**/*.py",
+    "open_strix/static/**/*",
     "open_strix/builtin_skills/**/*.md",
     "open_strix/**/*.md",
 ]
