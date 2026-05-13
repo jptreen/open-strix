@@ -39,7 +39,7 @@ Send `SIGINT` or `SIGTERM` to the worker process. It exits cleanly after the cur
 
 - Watch the worker stdout for lifecycle events like `issue_claimed`, `prompt_complete`, and `review_approved`
 - Check `chainlink session status --json` in your chainlink working directory
-- Check `npx acpx codex sessions show issue-<id>` in the routed repo
+- Check `npx acpx@0.7.0 codex sessions show issue-<id>` in the routed repo
 - Check `chainlink show <id> --json` for labels, comments, and milestone context
 
 ## Review Workflow

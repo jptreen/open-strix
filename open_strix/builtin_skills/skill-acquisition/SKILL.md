@@ -30,10 +30,10 @@ Both tools run via `npx` — no global install needed, just npm:
 
 ```bash
 # ClawHub CLI (primary discovery tool)
-npx clawhub --help
+npx clawhub@0.15.0 --help
 
 # Skillflag installer (for CLI-bundled skills)
-npx skillflag --help
+npx skillflag@0.1.4 --help
 ```
 
 ## Discovery — Finding Skills
@@ -44,17 +44,17 @@ ClawHub uses vector search (OpenAI embeddings), so natural language queries work
 
 ```bash
 # Search by description
-npx clawhub search "manage docker containers"
-npx clawhub search "git workflow automation"
+npx clawhub@0.15.0 search "manage docker containers"
+npx clawhub@0.15.0 search "git workflow automation"
 
 # Browse latest/trending
-npx clawhub explore                          # newest 25
-npx clawhub explore --sort trending          # trending now
-npx clawhub explore --sort downloads         # most popular
+npx clawhub@0.15.0 explore                          # newest 25
+npx clawhub@0.15.0 explore --sort trending          # trending now
+npx clawhub@0.15.0 explore --sort downloads         # most popular
 
 # Machine-readable output
-npx clawhub explore --json
-npx clawhub search "kubernetes" --json
+npx clawhub@0.15.0 explore --json
+npx clawhub@0.15.0 search "kubernetes" --json
 ```
 
 ### 2. Skillflag Discovery (for CLI tools you already have)
@@ -92,9 +92,9 @@ Always evaluate before installing:
 
 ```bash
 # Inspect without installing (ClawHub)
-npx clawhub inspect <slug>                   # metadata + description
-npx clawhub inspect <slug> --files           # list all files in the skill
-npx clawhub inspect <slug> --file SKILL.md   # read the actual skill content
+npx clawhub@0.15.0 inspect <slug>                   # metadata + description
+npx clawhub@0.15.0 inspect <slug> --files           # list all files in the skill
+npx clawhub@0.15.0 inspect <slug> --file SKILL.md   # read the actual skill content
 
 # Inspect a skillflag export
 <tool> --skill show <id>                 # read SKILL.md content
@@ -120,8 +120,8 @@ or skillflag-origin skills that are not manifest-gated.
 
 ```bash
 # Inspect first, then vendor the reviewed directory into optional-skills/.
-npx clawhub inspect <slug> --files
-npx clawhub inspect <slug> --file SKILL.md
+npx clawhub@0.15.0 inspect <slug> --files
+npx clawhub@0.15.0 inspect <slug> --file SKILL.md
 ```
 
 For shared use, copy the reviewed skill into `optional-skills/<slug>/`, update
@@ -185,10 +185,10 @@ Example: wrap `acpx` into a `coding` skill — SKILL.md teaches delegation behav
 
 ```bash
 # Login (GitHub OAuth)
-npx clawhub login
+npx clawhub@0.15.0 login
 
 # Publish a skill directory
-npx clawhub publish ./skills/my-skill \
+npx clawhub@0.15.0 publish ./skills/my-skill \
   --slug my-skill \
   --name "My Skill" \
   --version 1.0.0 \

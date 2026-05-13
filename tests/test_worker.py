@@ -220,7 +220,7 @@ def _codex_show(*, history_entries: int) -> str:
             "id: session-id",
             "sessionId: acp-id",
             "agentSessionId: -",
-            "agent: npx acpx codex",
+            "agent: npx acpx@0.7.0 codex",
             "cwd: /tmp/repo",
             "name: issue-50",
             "created: 2026-04-01T03:00:00Z",

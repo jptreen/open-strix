@@ -16,8 +16,9 @@ Any CLI tool can bundle skills and expose them via standardized flags:
 ```
 
 The tool only knows how to LIST and EXPORT skills. Installation into specific
-agents can be handled by a separate installer (`skill-install` / `npx skillflag
-install`), but open-strix shared installs should export, inspect, vendor, and
+agents can be handled by a separate installer (`skill-install` or
+`npx skillflag@0.1.4 install`), but open-strix shared installs should export,
+inspect, vendor, and
 manifest-gate the payload first.
 
 ## Discovery
@@ -99,16 +100,16 @@ After review, install from the extracted local directory:
 
 ```bash
 # Install into a specific agent + scope
-npx skillflag install /tmp/<id>-skill-review/<id> --agent <agent> --scope <scope>
+npx skillflag@0.1.4 install /tmp/<id>-skill-review/<id> --agent <agent> --scope <scope>
 
 # Interactive wizard (picks agent + scope)
-npx skillflag install /tmp/<id>-skill-review/<id>
+npx skillflag@0.1.4 install /tmp/<id>-skill-review/<id>
 
 # Install from local directory
-npx skillflag install ./skills/my-skill --agent claude --scope repo
+npx skillflag@0.1.4 install ./skills/my-skill --agent claude --scope repo
 
 # Custom destination (escape hatch for unlisted agents)
-npx skillflag install /tmp/<id>-skill-review/<id> --dest ~/agent-home/skills
+npx skillflag@0.1.4 install /tmp/<id>-skill-review/<id> --dest ~/agent-home/skills
 ```
 
 ### Agent Install Paths

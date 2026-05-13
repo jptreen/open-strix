@@ -38,13 +38,13 @@ Create `skills/<name>/SKILL.md`. The built-in **skill-creator** skill helps with
 
 ```bash
 # Search (natural language works)
-npx clawhub search "manage docker containers"
+npx clawhub@0.15.0 search "manage docker containers"
 
 # Browse trending
-npx clawhub explore --sort trending
+npx clawhub@0.15.0 explore --sort trending
 
 # Inspect before installing
-npx clawhub inspect <slug> --file SKILL.md
+npx clawhub@0.15.0 inspect <slug> --file SKILL.md
 ```
 
 For promoted shared skills, vendor the reviewed directory into `optional-skills/`,

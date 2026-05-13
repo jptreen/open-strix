@@ -10,7 +10,7 @@ Website: [clawhub.ai](https://clawhub.ai)
 No install needed — run via npx:
 
 ```bash
-npx clawhub <command>
+npx clawhub@0.15.0 <command>
 ```
 
 Or install globally: `npm i -g clawhub`
@@ -34,9 +34,9 @@ HTTP proxy supported: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`
 ### Authentication
 
 ```bash
-npx clawhub login                    # Browser-based GitHub OAuth
-npx clawhub login --token clh_...   # Headless / CI
-npx clawhub whoami                   # Verify stored token
+npx clawhub@0.15.0 login                    # Browser-based GitHub OAuth
+npx clawhub@0.15.0 login --token clh_...   # Headless / CI
+npx clawhub@0.15.0 whoami                   # Verify stored token
 ```
 
 Config location (macOS): `~/Library/Application Support/clawhub/config.json`
@@ -46,18 +46,18 @@ Override: `CLAWHUB_CONFIG_PATH`
 
 ```bash
 # Vector search (natural language works)
-npx clawhub search <query>
+npx clawhub@0.15.0 search <query>
 
 # Browse listings
-npx clawhub explore                              # newest 25
-npx clawhub explore --limit 50                   # more results
-npx clawhub explore --sort newest                # default
-npx clawhub explore --sort downloads             # most downloaded
-npx clawhub explore --sort rating                # highest rated
-npx clawhub explore --sort installs              # most installed
-npx clawhub explore --sort installsAllTime       # all-time installs
-npx clawhub explore --sort trending              # trending now
-npx clawhub explore --json                       # machine-readable
+npx clawhub@0.15.0 explore                              # newest 25
+npx clawhub@0.15.0 explore --limit 50                   # more results
+npx clawhub@0.15.0 explore --sort newest                # default
+npx clawhub@0.15.0 explore --sort downloads             # most downloaded
+npx clawhub@0.15.0 explore --sort rating                # highest rated
+npx clawhub@0.15.0 explore --sort installs              # most installed
+npx clawhub@0.15.0 explore --sort installsAllTime       # all-time installs
+npx clawhub@0.15.0 explore --sort trending              # trending now
+npx clawhub@0.15.0 explore --json                       # machine-readable
 
 # Output format: <slug>  v<version>  <age>  <summary>
 ```
@@ -65,24 +65,24 @@ npx clawhub explore --json                       # machine-readable
 ### Inspection
 
 ```bash
-npx clawhub inspect <slug>                       # metadata + description
-npx clawhub inspect <slug> --version <version>   # specific version
-npx clawhub inspect <slug> --tag <tag>           # tagged version (e.g. latest)
-npx clawhub inspect <slug> --versions            # version history
-npx clawhub inspect <slug> --versions --limit 50 # more versions
-npx clawhub inspect <slug> --files               # list files in version
-npx clawhub inspect <slug> --file SKILL.md       # raw file content (200KB limit)
-npx clawhub inspect <slug> --json                # machine-readable
+npx clawhub@0.15.0 inspect <slug>                       # metadata + description
+npx clawhub@0.15.0 inspect <slug> --version <version>   # specific version
+npx clawhub@0.15.0 inspect <slug> --tag <tag>           # tagged version (e.g. latest)
+npx clawhub@0.15.0 inspect <slug> --versions            # version history
+npx clawhub@0.15.0 inspect <slug> --versions --limit 50 # more versions
+npx clawhub@0.15.0 inspect <slug> --files               # list files in version
+npx clawhub@0.15.0 inspect <slug> --file SKILL.md       # raw file content (200KB limit)
+npx clawhub@0.15.0 inspect <slug> --json                # machine-readable
 ```
 
 ### Installation
 
 ```bash
 # Install latest version
-npx clawhub install <slug>
+npx clawhub@0.15.0 install <slug>
 
 # Install to specific location
-npx clawhub install <slug> --workdir ~/my-project --dir skills
+npx clawhub@0.15.0 install <slug> --workdir ~/my-project --dir skills
 
 # What it does:
 #   1. Resolves latest version via /api/v1/skills/<slug>
@@ -95,12 +95,12 @@ npx clawhub install <slug> --workdir ~/my-project --dir skills
 ### Management
 
 ```bash
-npx clawhub list                     # Show installed skills (reads lock.json)
-npx clawhub update <slug>            # Update specific skill
-npx clawhub update --all             # Update all installed skills
-npx clawhub update --force           # Overwrite local modifications
-npx clawhub uninstall <slug>         # Remove (interactive confirmation)
-npx clawhub uninstall <slug> --yes   # Remove (no confirmation)
+npx clawhub@0.15.0 list                     # Show installed skills (reads lock.json)
+npx clawhub@0.15.0 update <slug>            # Update specific skill
+npx clawhub@0.15.0 update --all             # Update all installed skills
+npx clawhub@0.15.0 update --force           # Overwrite local modifications
+npx clawhub@0.15.0 uninstall <slug>         # Remove (interactive confirmation)
+npx clawhub@0.15.0 uninstall <slug> --yes   # Remove (no confirmation)
 ```
 
 Update behavior:
@@ -111,15 +111,15 @@ Update behavior:
 ### Social
 
 ```bash
-npx clawhub star <slug>              # Star a skill
-npx clawhub star <slug> --yes        # Skip confirmation
-npx clawhub unstar <slug>            # Remove star
+npx clawhub@0.15.0 star <slug>              # Star a skill
+npx clawhub@0.15.0 star <slug> --yes        # Skip confirmation
+npx clawhub@0.15.0 unstar <slug>            # Remove star
 ```
 
 ### Publishing
 
 ```bash
-npx clawhub publish <path> \
+npx clawhub@0.15.0 publish <path> \
   --slug my-skill \
   --name "My Skill" \
   --version 1.0.0 \
@@ -137,14 +137,14 @@ npx clawhub publish <path> \
 ### Sync (Auto-Publish)
 
 ```bash
-npx clawhub sync                     # Scan + publish interactively
-npx clawhub sync --dry-run           # Preview only
-npx clawhub sync --all               # Non-interactive
-npx clawhub sync --root <dir>        # Extra scan roots
-npx clawhub sync --bump minor        # Version bump (default: patch)
-npx clawhub sync --changelog "text"  # Non-interactive changelog
-npx clawhub sync --tags a,b,c        # Tags (default: latest)
-npx clawhub sync --concurrency 4     # Parallel uploads
+npx clawhub@0.15.0 sync                     # Scan + publish interactively
+npx clawhub@0.15.0 sync --dry-run           # Preview only
+npx clawhub@0.15.0 sync --all               # Non-interactive
+npx clawhub@0.15.0 sync --root <dir>        # Extra scan roots
+npx clawhub@0.15.0 sync --bump minor        # Version bump (default: patch)
+npx clawhub@0.15.0 sync --changelog "text"  # Non-interactive changelog
+npx clawhub@0.15.0 sync --tags a,b,c        # Tags (default: latest)
+npx clawhub@0.15.0 sync --concurrency 4     # Parallel uploads
 ```
 
 Auto-scans:
@@ -155,27 +155,27 @@ Auto-scans:
 ### Deletion / Moderation
 
 ```bash
-npx clawhub delete <slug>            # Soft-delete (owner/mod/admin)
-npx clawhub undelete <slug>          # Restore (owner/mod/admin)
-npx clawhub hide <slug>              # Alias for delete
-npx clawhub unhide <slug>            # Alias for undelete
+npx clawhub@0.15.0 delete <slug>            # Soft-delete (owner/mod/admin)
+npx clawhub@0.15.0 undelete <slug>          # Restore (owner/mod/admin)
+npx clawhub@0.15.0 hide <slug>              # Alias for delete
+npx clawhub@0.15.0 unhide <slug>            # Alias for undelete
 ```
 
 ### Ownership Transfer
 
 ```bash
-npx clawhub transfer request <slug> <handle> [--message "..."]
-npx clawhub transfer list [--outgoing]
-npx clawhub transfer accept <slug>
-npx clawhub transfer reject <slug>
-npx clawhub transfer cancel <slug>
+npx clawhub@0.15.0 transfer request <slug> <handle> [--message "..."]
+npx clawhub@0.15.0 transfer list [--outgoing]
+npx clawhub@0.15.0 transfer accept <slug>
+npx clawhub@0.15.0 transfer reject <slug>
+npx clawhub@0.15.0 transfer cancel <slug>
 ```
 
 ### Admin Commands
 
 ```bash
-npx clawhub ban-user <handle> [--reason "..."] [--fuzzy]
-npx clawhub set-role <handle> <role> [--fuzzy]
+npx clawhub@0.15.0 ban-user <handle> [--reason "..."] [--fuzzy]
+npx clawhub@0.15.0 set-role <handle> <role> [--fuzzy]
 ```
 
 ## API Endpoints
@@ -194,5 +194,5 @@ Key REST endpoints (base: `https://clawhub.ai`):
 
 ## Telemetry
 
-Minimal install telemetry during `npx clawhub sync` (for install counts).
+Minimal install telemetry during `npx clawhub@0.15.0 sync` (for install counts).
 Disable: `export CLAWHUB_DISABLE_TELEMETRY=1`

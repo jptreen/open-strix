@@ -217,7 +217,7 @@ class WorkerAsyncTests(unittest.IsolatedAsyncioTestCase):
             prefix, result = expected.pop(0)
             if command[:3] == [str(Path.home() / ".cargo" / "bin" / "chainlink"), *prefix[:2]]:
                 actual = tuple(command[1:1 + len(prefix)])
-            elif command[:3] == ["npx", "acpx", "codex"]:
+            elif command[:3] == ["npx", "acpx@0.7.0", "codex"]:
                 actual = tuple(command[3:3 + len(prefix)])
             else:
                 self.fail(f"unexpected executable: {command}")

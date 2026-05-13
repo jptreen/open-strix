@@ -197,7 +197,7 @@ The log file grows, but memory usage does not — the climber reads only the las
 - Workspace: source file(s)
 - Eval: test suite + performance benchmark
 - Scope: implementation only, not tests
-- Coding agent option: for sophisticated file manipulation, consider using `npx acpx` or similar coding agent as the climber runtime instead of the default DeepAgent. Document this as a power-user configuration, not the default.
+- Coding agent option: for sophisticated file manipulation, consider using `npx acpx@0.7.0` or similar coding agent as the climber runtime instead of the default DeepAgent. Document this as a power-user configuration, not the default.
 - Expected convergence: 10-100 iterations
 
 ### World Model (Predictions)

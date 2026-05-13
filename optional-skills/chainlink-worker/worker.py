@@ -671,7 +671,7 @@ class Worker(AsyncCommandMixin):
         """Run one codex CLI command."""
         self._raise_if_abort_requested()
         return await self._run_shell(
-            ["npx", "acpx", "codex", *(str(part) for part in parts)],
+            ["npx", "acpx@0.7.0", "codex", *(str(part) for part in parts)],
             repo_path,
             timeout=timeout,
             check=check,
