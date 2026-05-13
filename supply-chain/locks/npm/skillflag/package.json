@@ -1,0 +1,8 @@
+{
+  "name": "supply-chain-scan-skillflag",
+  "private": true,
+  "description": "Scan-only manifest for pinned supply-chain entry point.",
+  "dependencies": {
+    "skillflag": "0.1.4"
+  }
+}

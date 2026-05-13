@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule: &weekly
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Etc/UTC"
+    labels: ["dependencies", "supply-chain"]
+  - package-ecosystem: "npm"
+    directory: "/supply-chain/locks/npm/acpx"
+    schedule: *weekly
+    labels: ["dependencies", "supply-chain"]
+  - package-ecosystem: "npm"
+    directory: "/supply-chain/locks/npm/clawhub"
+    schedule: *weekly
+    labels: ["dependencies", "supply-chain"]
+  - package-ecosystem: "npm"
+    directory: "/supply-chain/locks/npm/skillflag"
+    schedule: *weekly
+    labels: ["dependencies", "supply-chain"]
+  - package-ecosystem: "npm"
+    directory: "/supply-chain/locks/npm/modelcontextprotocol-server-brave-search"
+    schedule: *weekly
+    labels: ["dependencies", "supply-chain"]
+  - package-ecosystem: "npm"
+    directory: "/supply-chain/locks/npm/modelcontextprotocol-server-github"
+    schedule: *weekly
+    labels: ["dependencies", "supply-chain"]

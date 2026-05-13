@@ -1,0 +1,8 @@
+{
+  "name": "supply-chain-scan-modelcontextprotocol-server-github",
+  "private": true,
+  "description": "Scan-only manifest for pinned supply-chain entry point.",
+  "dependencies": {
+    "@modelcontextprotocol/server-github": "2025.4.8"
+  }
+}

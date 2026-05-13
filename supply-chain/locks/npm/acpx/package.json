@@ -1,0 +1,8 @@
+{
+  "name": "supply-chain-scan-acpx",
+  "private": true,
+  "description": "Scan-only manifest for pinned supply-chain entry point.",
+  "dependencies": {
+    "acpx": "0.7.0"
+  }
+}

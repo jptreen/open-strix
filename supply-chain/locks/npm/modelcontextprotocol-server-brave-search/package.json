@@ -1,0 +1,8 @@
+{
+  "name": "supply-chain-scan-modelcontextprotocol-server-brave-search",
+  "private": true,
+  "description": "Scan-only manifest for pinned supply-chain entry point.",
+  "dependencies": {
+    "@modelcontextprotocol/server-brave-search": "0.6.2"
+  }
+}
