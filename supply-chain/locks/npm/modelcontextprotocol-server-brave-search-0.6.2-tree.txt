@@ -1,0 +1,20 @@
+# npm resolved tree
+# package: @modelcontextprotocol/server-brave-search@0.6.2
+# generated: 2026-05-13
+# command: npm install --ignore-scripts --no-audit --no-fund @modelcontextprotocol/server-brave-search@0.6.2 && npm ls --all --omit=dev
+tmp.gytjbu3clq@1.0.0 /private/var/folders/rz/nqfyjkyj7kz0cwbpwn_1qm0c0000gn/T/tmp.gYtJbu3Clq
+└─┬ @modelcontextprotocol/server-brave-search@0.6.2
+  └─┬ @modelcontextprotocol/sdk@1.0.1
+    ├── content-type@1.0.5
+    ├─┬ raw-body@3.0.2
+    │ ├── bytes@3.1.2
+    │ ├─┬ http-errors@2.0.1
+    │ │ ├── depd@2.0.0
+    │ │ ├── inherits@2.0.4
+    │ │ ├── setprototypeof@1.2.0
+    │ │ ├── statuses@2.0.2
+    │ │ └── toidentifier@1.0.1
+    │ ├─┬ iconv-lite@0.7.2
+    │ │ └── safer-buffer@2.1.2
+    │ └── unpipe@1.0.0
+    └── zod@3.25.76
