@@ -34,7 +34,7 @@ Create `skills/<name>/SKILL.md`. The built-in **skill-creator** skill helps with
 
 ### 2. ClawHub — public registry
 
-[ClawHub](https://clawhub.ai) is a public skill registry with vector search, versioning, and moderation. Agents can search and install skills at runtime using the built-in **skill-acquisition** skill:
+[ClawHub](https://clawhub.ai) is a public skill registry with vector search, versioning, and moderation. Treat every install as a code review event: ClawHub skill content is prompt text and runnable code. open-strix only auto-loads ClawHub-origin skills that are listed in `optional-skills/manifest.json` and whose directory hash matches that manifest.
 
 ```bash
 # Search (natural language works)
@@ -45,10 +45,12 @@ npx clawhub explore --sort trending
 
 # Inspect before installing
 npx clawhub inspect <slug> --file SKILL.md
-
-# Install
-npx clawhub install <slug> --workdir "$(pwd)" --dir skills
 ```
+
+For promoted shared skills, vendor the reviewed directory into `optional-skills/`,
+update `optional-skills/manifest.json`, and copy that vendored directory into
+the agent's `skills/` folder. Ad-hoc ClawHub installs with `.clawhub/origin.json`
+are rejected at startup unless they are manifest-gated.
 
 ### 3. Skillflag — CLI-bundled skills
 
@@ -80,12 +82,15 @@ open-strix ships with skills that teach the agent how to operate:
 
 Built-in skills are read-only and synced from the open-strix package. They live in `.open_strix_builtin_skills/` (gitignored) and are refreshed on every startup.
 
-Service-specific pollers are available from [ClawHub](https://clawhub.ai):
+Service-specific pollers are vendored in `optional-skills/`:
 
 | Skill | What it does |
 |-------|-------------|
 | **bluesky-poller** | Bluesky notification poller with follow-gate trust tiers and cursor-based dedup |
 | **github-poller** | GitHub repo poller for issues, PRs, comments, and reviews with self-filtering |
+
+Install them by copying the vendored directory, for example `cp -R
+optional-skills/github-poller ./skills/`, then call `reload_pollers`.
 
 ### Disabling builtins
 

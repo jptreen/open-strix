@@ -1,6 +1,6 @@
 ---
 name: bluesky-poller
-description: Monitor Bluesky notifications (replies, mentions, quotes) on a schedule. Ready-to-use poller following the pollers.json contract with follow-gate trust tiers. Install from ClawHub or copy into your agent's skills/ folder.
+description: Monitor Bluesky notifications (replies, mentions, quotes) on a schedule. Ready-to-use poller following the pollers.json contract with follow-gate trust tiers. Copy the vendored repo directory into your agent's skills/ folder.
 ---
 
 # Bluesky Notification Poller
@@ -9,15 +9,16 @@ Monitors your Bluesky account for new replies, mentions, and quotes. Emits event
 
 ## Installation
 
-Install from [ClawHub](https://clawhub.ai):
+Copy the vendored skill from the open-strix repo into your agent's `skills/` folder:
 
 ```bash
-npx clawhub install bluesky-poller
+cp -R optional-skills/bluesky-poller ./skills/
 ```
 
-Or copy this skill directory into your agent's `skills/` folder.
-
-After installation, call `reload_pollers` to register the poller with the scheduler.
+The vendored directory hash is recorded in `optional-skills/manifest.json`.
+Startup refuses to load a ClawHub-origin `bluesky-poller` whose files do not
+match that manifest. After installation, call `reload_pollers` to register the
+poller with the scheduler.
 
 ## Setup
 

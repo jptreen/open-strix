@@ -1,6 +1,6 @@
 ---
 name: github-poller
-description: Monitor GitHub repositories for new issues, PRs, comments, and reviews on a schedule. Ready-to-use poller following the pollers.json contract. Install from ClawHub or copy into your agent's skills/ folder.
+description: Monitor GitHub repositories for new issues, PRs, comments, and reviews on a schedule. Ready-to-use poller following the pollers.json contract. Copy the vendored repo directory into your agent's skills/ folder.
 ---
 
 # GitHub Repository Poller
@@ -9,15 +9,16 @@ Monitors GitHub repositories for new activity. Emits events to the agent only wh
 
 ## Installation
 
-Install from [ClawHub](https://clawhub.ai):
+Copy the vendored skill from the open-strix repo into your agent's `skills/` folder:
 
 ```bash
-npx clawhub install github-poller
+cp -R optional-skills/github-poller ./skills/
 ```
 
-Or copy this skill directory into your agent's `skills/` folder.
-
-After installation, call `reload_pollers` to register the poller with the scheduler.
+The vendored directory hash is recorded in `optional-skills/manifest.json`.
+Startup refuses to load a ClawHub-origin `github-poller` whose files do not
+match that manifest. After installation, call `reload_pollers` to register the
+poller with the scheduler.
 
 ## Setup
 

@@ -59,6 +59,7 @@ from .prompts import DEFAULT_CHECKPOINT, SYSTEM_PROMPT, render_folders_section, 
 from .readonly_backend import BUILTIN_SKILLS_ROUTE, LoggingWriteGuardBackend, WriteGuardBackend, build_builtin_skills_backend
 from .scheduler import SchedulerJob, SchedulerMixin
 from .shell_jobs import ShellJobRegistry
+from .skill_integrity import validate_external_skills
 from .supervisor import Supervisor
 from .tools import (
     SEND_MESSAGE_LOOP_HARD_LIMIT,
@@ -532,6 +533,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         )
         skills_sources: list[str] = []
         if self.layout.skills_dir.exists():
+            validate_external_skills(self.layout.skills_dir)
             skills_sources.append("/skills")
         # Keep built-ins last so packaged defaults win on name collision.
         skills_sources.append(BUILTIN_SKILLS_ROUTE.rstrip("/"))

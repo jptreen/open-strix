@@ -110,19 +110,37 @@ npx clawhub inspect <slug> --file SKILL.md   # read the actual skill content
 
 ## Installation — Getting Skills In Place
 
+External skill installs are supply-chain sensitive. A skill's `SKILL.md` is
+agent instruction text, and its scripts can run with the agent's credentials.
+Prefer vendoring reviewed skills into the repo and updating
+`optional-skills/manifest.json`. Runtime startup refuses to load ClawHub-origin
+or skillflag-origin skills that are not manifest-gated.
+
 ### From ClawHub
 
 ```bash
-# Install to your skills directory
-npx clawhub install <slug> --workdir "$(pwd)" --dir skills
+# Inspect first, then vendor the reviewed directory into optional-skills/.
+npx clawhub inspect <slug> --files
+npx clawhub inspect <slug> --file SKILL.md
 ```
+
+For shared use, copy the reviewed skill into `optional-skills/<slug>/`, update
+`optional-skills/manifest.json`, and then copy the vendored directory into an
+agent's `skills/` folder. Avoid runtime `clawhub install` unless the operator is
+also updating the manifest.
 
 ### From Skillflag CLI Tools
 
 ```bash
-# Into a custom directory (open-strix agents)
-<tool> --skill export <id> | npx skillflag install --dest ./skills
+# Inspect before installing.
+<tool> --skill show <id>
+<tool> --skill export <id> | tar -tf -
 ```
+
+Pipe-form installs hide the payload between two CLIs. For shared use, export to
+a temporary tarball, inspect the file list and `SKILL.md`, vendor the reviewed
+directory into `optional-skills/`, update `optional-skills/manifest.json`, and
+then install from the vendored copy.
 
 ### From GitHub / Raw
 
@@ -185,10 +203,13 @@ npx clawhub publish ./skills/my-skill \
 
 ## Security Notes
 
-- ClawHub has moderation and security analysis
-- Skillflag exports are tar streams with path traversal protection
-- Always `inspect` before installing from unknown sources
-- Skills may include scripts — review them before granting execution
+- ClawHub has moderation and security analysis, but registry content is still
+  executable/instructional supply-chain input.
+- Skillflag exports are tar streams with path traversal protection, but pipe
+  installs still need an intermediate inspection step.
+- Always inspect before installing from unknown sources, then vendor and
+  manifest-gate shared skills.
+- Skills may include scripts — review them before granting execution.
 
 ## References
 

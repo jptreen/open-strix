@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hash_algorithm": "sha256",
+  "hash_scope": "skill directory files, sorted by relative path; ignores .clawhub, .skillflag, __pycache__, and .DS_Store",
+  "skills": [
+    {
+      "slug": "bluesky-poller",
+      "source": "clawhub-vendored",
+      "sha256": "c0d37733664cb92d4e27eccd6e05d92a6fad15a7f829b56ed90c6b75268021f6"
+    },
+    {
+      "slug": "github-poller",
+      "source": "clawhub-vendored",
+      "sha256": "0f48153669d8c4b44dacbcbf1bc07339672825e57f8bf3bf6ca26d2938169ffc"
+    }
+  ]
+}

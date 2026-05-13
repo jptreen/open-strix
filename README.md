@@ -123,12 +123,16 @@ disable_builtin_skills:
 
 Pollers are lightweight scripts that watch external services on a schedule and surface actionable signals. They live inside skills as `pollers.json` files and are discovered automatically by the scheduler.
 
-The built-in **pollers** skill teaches the agent the contract and design patterns. Service-specific pollers are available from [ClawHub](https://clawhub.ai):
+The built-in **pollers** skill teaches the agent the contract and design patterns. Service-specific pollers are vendored in this repo under `optional-skills/`:
 
 ```bash
-npx clawhub install bluesky-poller   # Bluesky notifications with follow-gate trust tiers
-npx clawhub install github-poller    # GitHub issues, PRs, comments, reviews
+cp -R optional-skills/bluesky-poller ./skills/
+cp -R optional-skills/github-poller ./skills/
 ```
+
+These vendored pollers are listed in `optional-skills/manifest.json`. Runtime
+startup refuses to load a ClawHub-origin skill when its directory hash does not
+match that manifest, so updates stay reviewable.
 
 All pollers follow the same contract: run on a cron schedule, output JSONL to stdout when there's something actionable, stay silent when there isn't. Writing your own is straightforward — see the built-in **pollers** skill for the full contract and design patterns.
 
