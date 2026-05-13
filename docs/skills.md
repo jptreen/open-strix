@@ -60,11 +60,16 @@ Any CLI tool that follows the [skillflag convention](https://agentskills.io) bun
 # List skills a tool provides
 acpx --skill list
 
-# Export and install
-acpx --skill export coding | npx skillflag install --dest ./skills
+# Inspect without installing
+acpx --skill show coding
+acpx --skill export coding | tar -tf -
 ```
 
-This is how tools teach agents to use them — the skill comes from the tool itself.
+This is how tools teach agents to use them — the skill comes from the tool
+itself. For shared installs, export to a temporary tarball, inspect it, vendor
+the reviewed directory into `optional-skills/`, update `optional-skills/manifest.json`,
+and install from the vendored copy. Direct pipe-form installs are intentionally
+not the open-strix runbook because they hide the payload between two tools.
 
 ## Built-in skills
 

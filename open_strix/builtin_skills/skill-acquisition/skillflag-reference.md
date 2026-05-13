@@ -12,10 +12,13 @@ Any CLI tool can bundle skills and expose them via standardized flags:
 ```bash
 <tool> --skill list              # What skills does this tool provide?
 <tool> --skill show <id>         # Read a skill's SKILL.md
-<tool> --skill export <id>       # Export as tar stream (for piping to installer)
+<tool> --skill export <id>       # Export as tar stream for review/vendor flow
 ```
 
-The tool only knows how to LIST and EXPORT skills. Installation into specific agents is handled by a separate installer (`skill-install` / `npx skillflag install`).
+The tool only knows how to LIST and EXPORT skills. Installation into specific
+agents can be handled by a separate installer (`skill-install` / `npx skillflag
+install`), but open-strix shared installs should export, inspect, vendor, and
+manifest-gate the payload first.
 
 ## Discovery
 
@@ -61,8 +64,11 @@ Fields: `id` (required), `summary` (optional), `version` (optional), `files` (op
 # Inspect without installing
 <tool> --skill export <id> | tar -tf -
 
-# Extract manually
-<tool> --skill export <id> | tar -x -C ~/skills/
+# Save, inspect, and extract manually
+<tool> --skill export <id> > /tmp/<id>-skill.tar
+tar -tf /tmp/<id>-skill.tar
+mkdir -p /tmp/<id>-skill-review
+tar -xf /tmp/<id>-skill.tar -C /tmp/<id>-skill-review
 ```
 
 Tar format:
@@ -73,18 +79,36 @@ Tar format:
 
 ## Installation via skill-install
 
+Pipe-form installation is convenient, but it hides the payload between the
+exporting CLI and the installer. For open-strix shared skills, prefer the
+reviewable flow:
+
+```bash
+<tool> --skill export <id> > /tmp/<id>-skill.tar
+tar -tf /tmp/<id>-skill.tar
+mkdir -p /tmp/<id>-skill-review
+tar -xf /tmp/<id>-skill.tar -C /tmp/<id>-skill-review
+# Review SKILL.md and supporting files, then vendor into optional-skills/<id>/
+# and update optional-skills/manifest.json before copying into ./skills/.
+```
+
+Runtime startup refuses to load `.skillflag/origin.json` skills that are absent
+from the manifest, and manifest-listed skills must match their recorded sha256.
+
+After review, install from the extracted local directory:
+
 ```bash
 # Install into a specific agent + scope
-<tool> --skill export <id> | npx skillflag install --agent <agent> --scope <scope>
+npx skillflag install /tmp/<id>-skill-review/<id> --agent <agent> --scope <scope>
 
 # Interactive wizard (picks agent + scope)
-<tool> --skill export <id> | npx skillflag install
+npx skillflag install /tmp/<id>-skill-review/<id>
 
 # Install from local directory
 npx skillflag install ./skills/my-skill --agent claude --scope repo
 
 # Custom destination (escape hatch for unlisted agents)
-<tool> --skill export <id> | npx skillflag install --dest ~/agent-home/skills
+npx skillflag install /tmp/<id>-skill-review/<id> --dest ~/agent-home/skills
 ```
 
 ### Agent Install Paths
