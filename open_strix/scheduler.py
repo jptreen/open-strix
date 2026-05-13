@@ -15,6 +15,7 @@ import yaml
 from apscheduler.triggers.cron import CronTrigger
 
 from .models import AgentEvent
+from .skill_integrity import validate_external_skills
 
 UTC = timezone.utc
 
@@ -215,6 +216,8 @@ class SchedulerMixin:
         return pollers
 
     def _reload_scheduler_jobs(self) -> None:
+        validate_external_skills(self.layout.skills_dir)
+
         for job in self.scheduler.get_jobs():
             if job.id.startswith("open_strix:"):
                 self.scheduler.remove_job(job.id)

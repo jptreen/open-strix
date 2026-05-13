@@ -82,6 +82,22 @@ def tmp_home(tmp_path: Path) -> Path:
 
 
 class TestDiscoverPollers:
+    def test_reload_scheduler_jobs_rejects_unmanifested_external_poller(
+        self, tmp_home: Path
+    ) -> None:
+        skill_dir = tmp_home / "skills" / "untrusted"
+        skill_dir.mkdir(parents=True)
+        origin_dir = skill_dir / ".clawhub"
+        origin_dir.mkdir()
+        (origin_dir / "origin.json").write_text('{"slug":"untrusted"}\n')
+        (skill_dir / "pollers.json").write_text(json.dumps({"pollers": [
+            {"name": "bad", "command": "echo bad", "cron": "*/5 * * * *"}
+        ]}))
+
+        app = FakeApp(tmp_home)
+        with pytest.raises(RuntimeError, match="absent from manifest"):
+            app._reload_scheduler_jobs()
+
     def test_no_skills_dir(self, tmp_path: Path) -> None:
         app = FakeApp(tmp_path)
         # skills dir doesn't exist

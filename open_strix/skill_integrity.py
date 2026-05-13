@@ -61,10 +61,13 @@ def load_skill_manifest(path: Path | None = None) -> dict[str, SkillManifestEntr
     return entries
 
 
-def _has_external_origin(skill_dir: Path) -> bool:
-    return (skill_dir / ".clawhub" / "origin.json").exists() or (
-        skill_dir / ".skillflag" / "origin.json"
-    ).exists()
+def _iter_external_origin_skill_dirs(skills_dir: Path) -> list[Path]:
+    skill_dirs: set[Path] = set()
+    for origin in sorted(skills_dir.rglob("origin.json")):
+        if origin.parent.name not in {".clawhub", ".skillflag"}:
+            continue
+        skill_dirs.add(origin.parent.parent)
+    return sorted(skill_dirs, key=lambda path: path.relative_to(skills_dir).as_posix())
 
 
 def validate_external_skills(skills_dir: Path) -> None:
@@ -74,12 +77,24 @@ def validate_external_skills(skills_dir: Path) -> None:
 
     manifest = load_skill_manifest()
     errors: list[str] = []
+    top_level_external: set[str] = set()
+
+    for skill_dir in _iter_external_origin_skill_dirs(skills_dir):
+        rel = skill_dir.relative_to(skills_dir)
+        if len(rel.parts) != 1:
+            errors.append(
+                f"{rel.as_posix()}: externally installed below nested path; "
+                "external skills must be top-level manifest entries"
+            )
+            continue
+        top_level_external.add(skill_dir.name)
+
     for child in sorted(skills_dir.iterdir(), key=lambda path: path.name):
         if not child.is_dir():
             continue
         entry = manifest.get(child.name)
         if entry is None:
-            if _has_external_origin(child):
+            if child.name in top_level_external:
                 errors.append(f"{child.name}: externally installed but absent from manifest")
             continue
 

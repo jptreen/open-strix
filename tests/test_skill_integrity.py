@@ -34,6 +34,29 @@ def test_validate_external_skills_rejects_unmanifested_clawhub_skill(tmp_path):
         validate_external_skills(tmp_path)
 
 
+def test_validate_external_skills_rejects_unmanifested_skillflag_skill(tmp_path):
+    _write_skill(tmp_path, "untrusted")
+    origin_dir = tmp_path / "untrusted" / ".skillflag"
+    origin_dir.mkdir()
+    (origin_dir / "origin.json").write_text('{"id":"untrusted"}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="absent from manifest"):
+        validate_external_skills(tmp_path)
+
+
+def test_validate_external_skills_rejects_nested_external_origin(tmp_path):
+    _write_skill(tmp_path, "wrapper")
+    nested = tmp_path / "wrapper" / "evil"
+    nested.mkdir()
+    (nested / "SKILL.md").write_text("# Evil\n", encoding="utf-8")
+    origin_dir = nested / ".clawhub"
+    origin_dir.mkdir()
+    (origin_dir / "origin.json").write_text('{"slug":"evil"}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="nested path"):
+        validate_external_skills(tmp_path)
+
+
 def test_validate_external_skills_accepts_manifested_local_skill(tmp_path, monkeypatch):
     _write_skill(tmp_path, "github-poller")
     digest = hash_skill_dir(tmp_path / "github-poller")

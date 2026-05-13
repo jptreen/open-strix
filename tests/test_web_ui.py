@@ -90,12 +90,17 @@ async def test_web_ui_serves_vendored_font_assets(tmp_path: Path) -> None:
     )
 
     class DummyAssetRequest:
-        match_info = {"path": "fonts/inter.css"}
+        def __init__(self, path: str) -> None:
+            self.match_info = {"path": path}
 
-    response = await handler(DummyAssetRequest())
-    assert response.status == 200
-    assert isinstance(response, web.FileResponse)
-    assert Path(response._path).name == "inter.css"
+    for asset_path, file_name in [
+        ("fonts/inter.css", "inter.css"),
+        ("fonts/InterVariable.woff2", "InterVariable.woff2"),
+    ]:
+        response = await handler(DummyAssetRequest(asset_path))
+        assert response.status == 200
+        assert isinstance(response, web.FileResponse)
+        assert Path(response._path).name == file_name
 
 
 def test_web_ui_page_refresh_updates_existing_message_reactions_without_replacing_nodes(tmp_path: Path) -> None:

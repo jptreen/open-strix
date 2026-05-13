@@ -44,10 +44,13 @@ CDN/SRI pins:
 
 - `marked@18.0.3`, `chart.js@4.4.0`: `open_strix/web_ui.py`,
   `open_strix/ops_dashboard.py`, with `sha384-*` integrity.
-- `xterm@5.3.0`, `@xterm/addon-fit@0.8.0`,
-  `@xterm/addon-web-links@0.8.0`: `claude_codes_chat` terminal template, with
+- `@xterm/xterm@5.5.0`, `@xterm/addon-fit@0.10.0`,
+  `@xterm/addon-web-links@0.11.0`: `claude_codes_chat` terminal template, with
   `sha384-*` integrity.
 - `htmx.org@1.9.10`: botnet-manager templates/design handoff pages in
+  kaleidoscope worktrees, with `sha384-*` integrity.
+- `react@18.3.1`, `react-dom@18.3.1`, `@babel/standalone@7.29.0`:
+  botnet-manager `design_handoff_botnet_manager/Botnet Manager.html` pages in
   kaleidoscope worktrees, with `sha384-*` integrity.
 
 Self-hosted font pins:
@@ -63,6 +66,8 @@ npx/bootstrap pins:
 - `skillflag@0.1.4`: open-strix skillflag install docs.
 - `acpx@0.7.0`: `optional-skills/chainlink-worker/worker.py` and docs.
 - `@anthropic-ai/claude-code@2.1.140`: `claude_codes_chat/bootstrap.py`.
+- `eslint@10.3.0`, `depcheck@1.4.7`: `tony` hooks/docs, scanned under
+  `supply-chain/locks/npm/dev-tools/`.
 - `@modelcontextprotocol/server-brave-search@0.6.2` and
   `@modelcontextprotocol/server-github@2025.4.8`: open-strix `SETUP.md`.
 
@@ -109,13 +114,34 @@ PyPI pins:
   `google-auth-oauthlib==1.4.0`, `matrix-nio==0.25.2`,
   `oauth2client==4.1.3`, `open-strix==0.1.43`,
   `pdfplumber==0.11.9`, `pytz==2026.2`, `requests==2.34.0`.
+- Build-system pins:
+  - Hatchling projects in the kaleidoscope, kaleidoscope_e2e,
+    kaleidoscope_ux, and open-strix worktrees use `hatchling==1.29.0` in
+    `[build-system].requires`.
+  - `claude_codes_chat/pyproject.toml` uses `setuptools==82.0.1` and
+    `setuptools-scm==10.0.5` in `[build-system].requires`.
 - Deploy-time Ansible paths that use `pip` consume hash-pinned
   `requirements.lock` files and install local packages with
   `--no-deps --no-build-isolation`.
+- Ansible deploy lockfiles are the source of truth for their full transitive
+  package sets:
+  - `alert-receiver/requirements.lock`, `botnet-manager/requirements.lock`,
+    `cost-watcher/requirements.lock`, `openstrix/requirements.lock`.
+  - `ansible/roles/openstrix-install/files/requirements.lock` in worktrees that
+    deploy the in-repo OpenStrix helper from role-local dependency pins.
+  - `ansible/roles/litellm-proxy/files/requirements.lock`: includes
+    `litellm==1.83.14`, `litellm-enterprise==0.1.39`,
+    `fastapi==0.124.4`, `uvicorn==0.33.0`, `mcp==1.26.0`,
+    `pydantic==2.12.5`, and the hashed transitive closure.
+  - `ansible/roles/synapse/files/requirements.lock` and
+    `requirements-aarch64-qemu.lock`: include `matrix-synapse==1.152.1`,
+    `psycopg2-binary==2.9.12`, `pydantic==2.13.4`,
+    `python-multipart==0.0.28`, `pyyaml==6.0.3`, and the hashed
+    transitive closure.
 
 npm scan locks:
 
-- `supply-chain/locks/npm/<tool>/*-tree.txt` records `npm ls --all`.
+- `supply-chain/locks/npm/*-tree.txt` records `npm ls --all`.
 - `supply-chain/locks/npm/<tool>/package-lock.json` is scan-only input for
   Dependabot/npm audit.
 
