@@ -327,15 +327,21 @@ Add [MCP](https://modelcontextprotocol.io/) servers to give your agent access to
 mcp_servers:
   - name: brave-search
     command: npx
-    args: ["-y", "@anthropic/mcp-server-brave-search"]
+    args: ["-y", "@modelcontextprotocol/server-brave-search@0.6.2"]
     env:
       BRAVE_API_KEY: "${BRAVE_API_KEY}"
   - name: github
     command: npx
-    args: ["-y", "@anthropic/mcp-server-github"]
+    args: ["-y", "@modelcontextprotocol/server-github@2025.4.8"]
     env:
       GITHUB_TOKEN: "${GITHUB_TOKEN}"
 ```
+
+The package names above were verified against the npm registry on 2026-05-13.
+The older `@anthropic/mcp-server-*` names are not published there. Keep the
+`@modelcontextprotocol/*@<exact-version>` pins in place; bump them by checking
+`npm view <package> version`, updating the copied config, and smoke-testing the
+MCP server before promoting it to agent homes.
 
 Each server entry requires:
 - `name` — unique identifier (used to namespace tools as `mcp_<name>_<tool>`)
