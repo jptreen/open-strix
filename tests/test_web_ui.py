@@ -66,7 +66,7 @@ def test_web_ui_page_includes_markdown_assets_and_styles(tmp_path: Path) -> None
 
     page = _render_web_ui_page(strix)
 
-    assert '<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>' in page
+    assert '<script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js" integrity="sha384-coEhNYf+uY/IAdm3afqLaaHhP4vzpDHARAMbRvTGjDwDSCD7DnG5dAKe4sDoUupt" crossorigin="anonymous"></script>' in page
     assert (
         '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" '
         'rel="stylesheet">'
