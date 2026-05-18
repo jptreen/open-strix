@@ -908,6 +908,160 @@ async def test_send_message_tool_returns_tool_error_on_empty_text(
 
 
 @pytest.mark.asyncio
+async def test_send_message_format_markdown_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeMessageable:
+        pass
+
+    class FakeSentMessage:
+        id = 12345
+
+    class FakeChannel(FakeMessageable):
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> FakeSentMessage:
+            self.sent.append(text)
+            return FakeSentMessage()
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+    monkeypatch.setattr(app_mod.discord.abc, "Messageable", FakeMessageable)
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke({"text": "hello", "channel_id": "123"})
+
+    assert "sent=True" in result
+    assert channel.sent == ["hello"]
+    assert app.message_history_by_channel["123"][-1]["format"] == "markdown"
+
+
+@pytest.mark.asyncio
+async def test_send_message_format_html_to_web_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+    tools = {tool.name: tool for tool in app._build_tools()}
+
+    result = await tools["send_message"].ainvoke(
+        {
+            "text": "<section><strong>status</strong></section>",
+            "channel_id": app.config.web_ui_channel_id,
+            "format": "html",
+        },
+    )
+
+    assert "sent=True" in result
+    message = app.message_history_by_channel[app.config.web_ui_channel_id][-1]
+    assert message["content"] == "<section><strong>status</strong></section>"
+    assert message["format"] == "html"
+    assert message["source"] == "web"
+
+
+@pytest.mark.asyncio
+async def test_send_message_format_html_to_discord_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> None:
+            self.sent.append(text)
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke(
+        {"text": "<b>hello</b>", "channel_id": "123", "format": "html"},
+    )
+
+    assert "html" in result
+    assert "web UI" in result
+    assert channel.sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_message_invalid_format_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_agent_factory(monkeypatch)
+    app = app_mod.OpenStrixApp(tmp_path)
+
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send(self, text: str) -> None:
+            self.sent.append(text)
+
+    class FakeDiscordClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.channel = channel
+
+        def is_ready(self) -> bool:
+            return True
+
+        def get_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+        async def fetch_channel(self, _: int) -> FakeChannel:
+            return self.channel
+
+    channel = FakeChannel()
+    app.discord_client = FakeDiscordClient(channel)  # type: ignore[assignment]
+
+    tools = {tool.name: tool for tool in app._build_tools()}
+    result = await tools["send_message"].ainvoke(
+        {"text": "hello", "channel_id": "123", "format": "rtf"},
+    )
+
+    assert "format" in result
+    assert "markdown" in result
+    assert "html" in result
+    assert channel.sent == []
+
+
+@pytest.mark.asyncio
 async def test_send_message_tool_sends_attachment_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

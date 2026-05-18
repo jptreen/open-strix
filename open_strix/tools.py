@@ -359,10 +359,35 @@ class ToolsMixin:
             channel_id: str | None = None,
             channel_type: str | None = None,
             attachment_paths: list[str] | None = None,
+            format: str = "markdown",
         ) -> str:
             """Send a message to the current conversation or a specific channel with optional file attachments.
+
             Omit channel_id and channel_type to reply to the source of the current event.
-            Specify both to send to a different channel (e.g. cross-post to Discord while replying to Matrix)."""
+            Specify both to send to a different channel (e.g. cross-post to Discord while replying to Matrix).
+
+            format="markdown" sends normal markdown text. format="html" renders sandboxed
+            HTML in the local web UI only (Discord channels reject html).
+
+            The web UI chat surface is light: the agent message bubble is approximately
+            rgba(255, 250, 241, 0.84) over a #efe4cf -> #f7f2e7 cream gradient. HTML
+            content renders directly on top of that cream background (the iframe itself
+            is transparent). Use dark text on the inherited cream OR paint your own
+            opaque html/body background so contrast is under your control. Light text on
+            the default cream is unreadable.
+            """
+            if format not in {"markdown", "html"}:
+                self.log_event(
+                    "tool_call_error",
+                    tool="send_message",
+                    error_type="invalid_format",
+                    format=format,
+                )
+                return (
+                    "send_message failed: format must be either 'markdown' or 'html' "
+                    f"(got {format!r})."
+                )
+
             resolved_attachment_paths, attachment_names = self._resolve_send_message_attachments(
                 attachment_paths,
             )
@@ -380,6 +405,12 @@ class ToolsMixin:
             target_channel_id = channel_id or self.current_channel_id
             if target_channel_id is None:
                 return "No channel_id provided and no current event channel is available."
+            if format == "html" and not self.is_local_web_channel(target_channel_id):
+                return (
+                    "format='html' is only supported on the local web UI channel; "
+                    f"target channel {target_channel_id} is a Discord channel. Re-send with "
+                    "format='markdown'."
+                )
 
             similarity_basis = text
             if attachment_names:
@@ -463,6 +494,7 @@ class ToolsMixin:
                 channel_type=channel_type,
                 attachment_paths=resolved_attachment_paths,
                 attachment_names=attachment_names,
+                format=format,
             )
 
             self.log_event(
@@ -472,6 +504,7 @@ class ToolsMixin:
                 sent=sent,
                 chunks=sent_chunks,
                 attachment_names=attachment_names,
+                format=format,
                 git_sync="deferred",
                 message_id=sent_message_id,
                 text=text,
@@ -1508,6 +1541,16 @@ class ToolsMixin:
             names = [p.name for p in pollers]
             return f"Reloaded. {len(pollers)} poller(s) registered: {', '.join(names)}"
 
+        @tool("reload_uis")
+        async def reload_uis() -> str:
+            """Reload all web UI plugins from skills/*/ui.json files. Call this after installing or updating a skill that includes UIs."""
+            plugins = await self.ui_plugins.reload()
+            self.log_event("tool_call", tool="reload_uis", count=len(plugins))
+            if not plugins:
+                return "Reloaded. No UIs found."
+            names = [plugin.name for plugin in plugins]
+            return f"Reloaded. {len(plugins)} UI(s) registered: {', '.join(names)}"
+
         @tool("lookup")
         def lookup(query: str) -> str:
             """Look up a Discord user or channel by name or ID.  Returns matching entries with their IDs, mention format, and type.  Use this when you need to find a channel_id or user mention format."""
@@ -1716,6 +1759,7 @@ class ToolsMixin:
             add_schedule,
             remove_schedule,
             reload_pollers,
+            reload_uis,
             climb_register,
             climb_unregister,
             climb_status,

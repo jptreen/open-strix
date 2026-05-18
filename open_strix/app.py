@@ -69,6 +69,7 @@ from .tools import (
     SendMessageCircuitBreakerStop,
     ToolsMixin,
 )
+from .ui_plugins import UIPluginManager
 from .web_ui import WebChatMixin
 
 UTC = timezone.utc
@@ -423,6 +424,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self.shell_jobs = ShellJobRegistry(
             jobs_dir=self.layout.logs_dir / "shell-jobs",
         )
+        self.ui_plugins = UIPluginManager(self)
 
         self.discord_client: DiscordBridge | None = None
         self.api_runner: Any | None = None
@@ -495,6 +497,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
                         ]
                         if isinstance(record.get("reactions"), list)
                         else [],
+                        format=str(record.get("format", "markdown")).strip() or "markdown",
                         persist=False,
                     )
                     continue
@@ -1463,6 +1466,8 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
         self._install_drain_handler()
         self.scheduler.start()
         self._reload_scheduler_jobs()
+        self.ui_plugins.discover()
+        await self.ui_plugins.start_all()
         self.supervisor.start_all()
         removed = _cleanup_old_sessions(
             self.layout.sessions_dir,
@@ -1547,6 +1552,7 @@ class OpenStrixApp(DiscordMixin, SchedulerMixin, ToolsMixin, WebChatMixin):
     async def shutdown(self) -> None:
         self.log_event("app_shutdown_start")
         self.supervisor.stop_all()
+        await self.ui_plugins.stop_all()
         if self.mcp_manager is not None:
             await self.mcp_manager.shutdown()
         if self.api_runner is not None:

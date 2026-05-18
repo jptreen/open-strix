@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
 import re
 from typing import Any
@@ -13,6 +14,7 @@ from .models import AgentEvent
 from .phone_book import populate_from_guilds, save_phone_book, update_from_message
 
 UTC = timezone.utc
+LOGGER = logging.getLogger(__name__)
 DISCORD_MESSAGE_CHAR_LIMIT = 2000
 DISCORD_HISTORY_REFRESH_LIMIT = 50
 ERROR_REACTION_EMOJI = "❌"
@@ -194,6 +196,7 @@ class DiscordMixin:
         channel_type: str | None = None,
         attachment_paths: list[Path] | None = None,
         attachment_names: list[str] | None = None,
+        format: str = "markdown",
     ) -> tuple[bool, str | None, int]:
         # Built-in web UI handler takes priority — a message addressed to the
         # web UI channel should never be redirected to an external bridge,
@@ -203,6 +206,7 @@ class DiscordMixin:
                 channel_id=channel_id,
                 text=text,
                 attachment_names=attachment_names,
+                format=format,
             )
 
         # Check config-driven channel handlers.
@@ -244,6 +248,7 @@ class DiscordMixin:
             text=text,
             attachment_paths=attachment_paths,
             attachment_names=attachment_names,
+            format=format,
         )
 
     async def _send_via_http_handler(
@@ -324,7 +329,17 @@ class DiscordMixin:
         text: str,
         attachment_paths: list[Path] | None = None,
         attachment_names: list[str] | None = None,
+        format: str = "markdown",
     ) -> tuple[bool, str | None, int]:
+        message_format = format
+        if message_format == "html":
+            LOGGER.warning(
+                "send_message received format='html' for Discord channel %s; "
+                "sending raw text as markdown",
+                channel_id,
+            )
+            message_format = "markdown"
+
         chunks = [chunk for chunk in _chunk_discord_message(text) if chunk.strip()]
         files_to_send = attachment_paths or []
         outbound_attachment_names = attachment_names or []
@@ -362,6 +377,7 @@ class DiscordMixin:
                             message_id=sent_message_id,
                             is_bot=True,
                             source="discord",
+                            format=message_format,
                         )
                         if self._current_turn_sent_messages is not None:
                             self._current_turn_sent_messages.append(
@@ -598,12 +614,14 @@ class DiscordMixin:
         timestamp: str | None = None,
         reactions: list[str] | None = None,
         persist: bool = True,
+        format: str = "markdown",
     ) -> bool:
         normalized_message_id = str(message_id).strip() if message_id not in (None, "") else None
         if normalized_message_id is not None:
             for existing in self.message_history_by_channel.get(channel_id, []):
                 if existing.get("message_id") == normalized_message_id:
                     return False
+        message_format = format if format in {"markdown", "html"} else "markdown"
 
         item = {
             "timestamp": timestamp if timestamp is not None else _utc_now_iso(),
@@ -615,6 +633,7 @@ class DiscordMixin:
             "content": content,
             "attachments": attachment_names,
             "reactions": list(reactions or []),
+            "format": message_format,
         }
         self.message_history_all.append(item)
         self.message_history_by_channel[channel_id].append(item)
@@ -630,6 +649,7 @@ class DiscordMixin:
                     "source": source,
                     "content": content,
                     "attachments": list(attachment_names),
+                    "format": message_format,
                 },
             )
         return True
