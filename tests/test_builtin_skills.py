@@ -246,8 +246,13 @@ def test_materialized_builtin_skills_include_skill_acquisition() -> None:
     assert "skillflag" in skill_text.lower()
 
     clawhub_text = clawhub_ref.read_text(encoding="utf-8")
-    assert "clawhub search" in clawhub_text
-    assert "clawhub install" in clawhub_text
+    # Both verbs must be documented.
+    assert "search" in clawhub_text
+    assert "install" in clawhub_text
+    # Supply-chain pinning (kaleidoscope-qkby) requires the doc to invoke
+    # clawhub via a pinned npx form (``npx clawhub@<version> <verb>``).
+    # Drop this once unpinned invocations are restored.
+    assert "clawhub@" in clawhub_text
 
     skillflag_text = skillflag_ref.read_text(encoding="utf-8")
     assert "--skill list" in skillflag_text
