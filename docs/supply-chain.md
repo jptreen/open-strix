@@ -218,18 +218,74 @@ Advisory scanning:
 
 ### PyPI
 
-1. Update the exact direct pin in `pyproject.toml`.
-2. Run `uv lock` in that project directory.
-3. If Ansible deploys the project, regenerate `requirements.lock` using the
+1. **Check `[tool.uv.sources]` first.** If the dep being pinned has an entry
+   in that block (i.e. it is sourced from a git URL, not the PyPI registry),
+   STOP — see "Internal forks" below. Do not change its `dependencies = [...]`
+   entry, and do NOT delete its `[tool.uv.sources]` block.
+2. Update the exact direct pin in `pyproject.toml`.
+3. Run `uv lock` in that project directory.
+4. If Ansible deploys the project, regenerate `requirements.lock` using the
    command in that file's header.
-4. If the project is installed locally by Ansible, keep build backends in the
+5. If the project is installed locally by Ansible, keep build backends in the
    requirements export and keep the package install on
    `--no-deps --no-build-isolation`.
-5. Run focused tests and affected deploy syntax checks:
+6. Run focused tests and affected deploy syntax checks:
 
    ```bash
    make deploy-check PLAYBOOK=<playbook>.yml ARGS='--syntax-check'
    ```
+
+### Internal forks (`[tool.uv.sources]`)
+
+Internal forks of trusted upstream projects — e.g. `jptreen/open-strix` — are
+intentionally NOT subject to the exact-pinning rule. The rule defends against
+external maintainer/registry compromise; an internal fork's threat surface is
+our own commit history and ssh credentials, not a public package registry.
+
+The convention:
+
+```toml
+# pyproject.toml
+dependencies = [
+    "open-strix",                                # bare name, no version
+]
+
+[tool.uv.sources]
+open-strix = { git = "https://github.com/jptreen/open-strix", branch = "main" }
+```
+
+`uv lock` resolves the bare name through the source override and pins it to a
+specific commit SHA in `uv.lock`. The lock IS the reproducibility surface; the
+`pyproject.toml` entry is an identity statement ("this dep is ours, track our
+trunk"), not a version constraint.
+
+Do NOT:
+
+- Pin the dep in `dependencies = [...]` (e.g. `open-strix==0.1.43`). PyPI's
+  `0.1.43` is upstream's wheel, not the fork's — see incident `tony-dvy`.
+- Delete the `[tool.uv.sources]` block as part of a dep-pinning sweep.
+- SHA-pin the fork in `[tool.uv.sources]`. Branch-tracking is intentional;
+  `uv.lock` carries the SHA. SHA-pinning here forces a manual bump for every
+  fork commit, which negates the fork's purpose.
+
+Bump procedure for an internal fork:
+
+1. Land changes on the fork's tracked branch (e.g. `main` on
+   `jptreen/open-strix`).
+2. In the consumer project (e.g. `tony`):
+
+   ```bash
+   uv lock --upgrade-package <dep-name>
+   ```
+
+   This re-resolves the bare name through the source override and updates
+   `uv.lock` to the fork's new HEAD SHA.
+3. Commit the `uv.lock` change and deploy as usual.
+
+If a future dep-pinning sweep encounters a `[tool.uv.sources]` entry, the
+correct action is **leave it alone**. The inline tripwire comments next to
+the override block (in consumer projects) reiterate this; both `tony` and
+`open-strix` projects carry them.
 
 ### ClawHub / Skillflag Skills
 
@@ -257,7 +313,9 @@ Before adding a new third-party entry point:
 
 - CDN script/link: exact version and SRI, or self-host it.
 - npm/`npx`: exact version and scan lock.
-- PyPI: exact direct pin and `uv.lock`.
+- PyPI: exact direct pin and `uv.lock`. **Exception:** internal forks
+  declared via `[tool.uv.sources]` use bare names + branch-tracking — see the
+  "Internal forks" subsection under PyPI Bump Runbooks.
 - Ansible `pip`: hash-pinned requirements or no-deps local install backed by a
   lock.
 - Skill content: inspected, vendored, manifest-hashed.
